@@ -151,7 +151,7 @@ The unit and integration suites are self-contained: they spin up a mock Cloud Co
 ## Honest limitations
 
 - **Unofficial transport.** Cloud Code is not a public API; Google changes it without notice and one day this bridge will need a patch. Your account, your risk, your subscription.
-- **Throughput is model-bound.** `gemini-3.8-flash` decodes anywhere from ~85 to ~185 tokens/s depending on what backend the request lands on and how long the unbroken stream is: short answers average lower because the first token dominates, long tool-heavy turns approach peak. The route does not matter — four channels and a direct fallback give the same number. `gemini-3-flash` is roughly 2.5× faster; the bottleneck is the model, not the network.
+- **Throughput is model-bound.** Wall-clock measurements on the raw stream: `gemini-3.8-flash` runs at 85–140 tokens/s (the `-tiered` variant sits at the top, ~140), `gemini-3-flash` at ~230. The spread within one model is the backend and the length of the unbroken stream: a short answer is dragged down by its first token, a long turn approaches peak. The route does not matter — four channels and a direct fallback give the same number. Client counters such as DSH's can read higher because they include reasoning tokens and tool-call JSON.
 - **`gemini-3.8-flash` may only exist as the `-tiered` variant** on some plans; the alias resolves it for you.
 - **Reasoning arrives in two large blocks** upstream, so it cannot be paced without delaying the answer. Text is smooth; thinking is chunky.
 - **Egress relays are somebody else's infrastructure.** They see SNI and volume, never TLS content. They also die without warning.
