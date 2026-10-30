@@ -1,11 +1,21 @@
-# gemini-to-dsh
+<p align="center">
+  <img src="assets/banner.svg" alt="gemini-to-dsh — Gemini 3.x Flash inside DeepSeek Harness" width="900">
+</p>
 
-[![Release](https://img.shields.io/github/v/release/ext3ndedsoft/gemini-to-dsh?color=blue)](https://github.com/ext3ndedsoft/gemini-to-dsh/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](https://nodejs.org)
-[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](bridge/package.json)
+<p align="center">
+  <a href="https://github.com/ext3ndedsoft/gemini-to-dsh/releases"><img src="https://img.shields.io/github/v/release/ext3ndedsoft/gemini-to-dsh?style=for-the-badge&color=4d8dff&labelColor=0b0f17" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/NODE-%E2%89%A520-7c6cff?style=for-the-badge&labelColor=0b0f17&logo=nodedotjs&logoColor=white" alt="Node 20+">
+  <img src="https://img.shields.io/badge/DEPENDENCIES-NONE-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="No dependencies">
+</p>
 
-[English version](README.en.md)
+<p align="center">
+  <b>Русский</b> · <a href="README.en.md">English</a>
+</p>
+
+Мост, который заводит **Gemini 3.x Flash** в [DSH](https://github.com/deepseek-ai/deepseek-harness) — или в любой другой клиент, говорящий на OpenAI. В комплекте: слой выхода в сеть для случаев, когда Гугл напрямую недоступен, плагин веб-поиска с настоящим кэшем и оверлей с квотой.
+
+Без зависимостей. Node 20+. Два локальных порта.
 
 Мост, который заводит **Gemini 3.x Flash** в [DSH](https://github.com/deepseek-ai/deepseek-harness) — или в любой другой клиент, говорящий на OpenAI. В комплекте: слой выхода в сеть для случаев, когда Гугл напрямую недоступен, плагин веб-поиска с настоящим кэшем и оверлей с квотой.
 
