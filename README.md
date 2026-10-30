@@ -1,5 +1,10 @@
 # gemini-to-dsh
 
+[![Release](https://img.shields.io/github/v/release/ext3ndedsoft/gemini-to-dsh?color=blue)](https://github.com/ext3ndedsoft/gemini-to-dsh/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](https://nodejs.org)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](bridge/package.json)
+
 An OpenAI-compatible bridge that puts **Gemini 3.x Flash** inside [DSH](https://github.com/deepseek-ai/deepseek-harness) — or any other OpenAI-speaking client — including a region-agnostic egress layer for networks where Google is not directly reachable, a web-search plugin with real caching, and a quota overlay.
 
 No dependencies. Node 20+. Two loopback ports.

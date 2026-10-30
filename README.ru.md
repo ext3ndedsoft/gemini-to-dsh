@@ -1,5 +1,12 @@
 # gemini-to-dsh
 
+[![Release](https://img.shields.io/github/v/release/ext3ndedsoft/gemini-to-dsh?color=blue)](https://github.com/ext3ndedsoft/gemini-to-dsh/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520-brightgreen)](https://nodejs.org)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](bridge/package.json)
+
+[English version](README.md)
+
 Мост, который заводит **Gemini 3.x Flash** в [DSH](https://github.com/deepseek-ai/deepseek-harness) — или в любой другой клиент, говорящий на OpenAI. В комплекте: слой выхода в сеть для случаев, когда Гугл напрямую недоступен, плагин веб-поиска с настоящим кэшем и оверлей с квотой.
 
 Без зависимостей. Node 20+. Два локальных порта.
