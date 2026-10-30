@@ -1,0 +1,539 @@
+/**
+ * Multi-account layer for gemini-to-dsh-bridge.
+ *
+ * Keeps a local pool of Google accounts that hold Antigravity entitlements,
+ * refreshes their tokens, reads their model quota from Cloud Code, and ranks
+ * them so a request goes to the account with the most headroom for that model.
+ *
+ * The account already present in ~/.gemini/oauth_creds.json is imported as the
+ * `native` account and stays mirrored back into that file, so the Antigravity
+ * IDE keeps working with the same session.
+ */
+
+import './dns-fix.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { readConfig } from './egress.js';
+
+export const API = 'https://daily-cloudcode-pa.googleapis.com';
+export const USER_AGENT = 'antigravity/1.11.5 windows/amd64';
+export const DEFAULT_PROJECT = 'aicode-consumers';
+
+// OAuth client used to refresh the stored tokens. It is not a project credential:
+// the same public installed-app client ships inside Google's own Gemini CLI, so it
+// is read from the environment or from a local file and never carried in source.
+const OAUTH_FILE = process.env.AG_OAUTH_FILE || path.join(os.homedir(), '.dsh', 'ag-oauth.json');
+let oauthCache = null;
+
+function oauth() {
+  if (oauthCache) return oauthCache;
+  if (process.env.AG_CLIENT_ID && process.env.AG_CLIENT_SECRET) {
+    oauthCache = { id: process.env.AG_CLIENT_ID, secret: process.env.AG_CLIENT_SECRET };
+    return oauthCache;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(OAUTH_FILE, 'utf8').replace(/^\uFEFF/, ''));
+    const id = raw.client_id || raw.clientId || raw.id;
+    const secret = raw.client_secret || raw.clientSecret || raw.secret;
+    if (id && secret) {
+      oauthCache = { id, secret };
+      return oauthCache;
+    }
+  } catch {
+    // absent or unreadable — explained to the caller below
+  }
+  throw new Error(
+    `OAuth client is not configured: set AG_CLIENT_ID and AG_CLIENT_SECRET, or write ` +
+      `{"client_id": "...", "client_secret": "..."} to ${OAUTH_FILE}`
+  );
+}
+
+const clientId = () => oauth().id;
+const clientSecret = () => oauth().secret;
+const SCOPES = [
+  'openid',
+  'email',
+  'https://www.googleapis.com/auth/cloud-platform',
+  'https://www.googleapis.com/auth/userinfo.email',
+].join(' ');
+
+export const CREDS_FILE =
+  process.env.AG_CREDS_FILE || path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+const STORE_FILE =
+  process.env.AG_ACCOUNTS_FILE || path.join(path.dirname(CREDS_FILE), 'dsh-bridge', 'accounts.json');
+
+const MODELS_TTL = 45_000;
+const META_TTL = 3_600_000;
+
+/** @type {{accounts: any[], pinned: string|null}|null} */
+let store = null;
+/** @type {Map<string, {at:number, models:any}>} */
+const modelsCache = new Map();
+/** @type {Map<string, number>} `${accountId}|${model}` -> epoch ms until which the account is skipped */
+const cooldowns = new Map();
+/** @type {Map<string, Promise<any>>} */
+const refreshing = new Map();
+/** @type {Map<string, {verifier:string, at:number}>} */
+const pendingLogins = new Map();
+
+function log(...args) {
+  console.log(new Date().toISOString(), '[accounts]', ...args);
+}
+
+// ------------------------------------------------------------------- storage
+
+function saveStore() {
+  fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
+  const tmp = STORE_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
+  fs.renameSync(tmp, STORE_FILE);
+}
+
+function emailFromIdToken(idToken) {
+  if (typeof idToken !== 'string' || idToken.split('.').length < 2) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString('utf8'));
+    return payload.email || null;
+  } catch {
+    return null;
+  }
+}
+
+function readNativeCreds() {
+  try {
+    return JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Mirror a native account's tokens back into the shared Antigravity credential file. */
+function writeNativeCreds(acc) {
+  let current = {};
+  try {
+    current = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'));
+  } catch {}
+  const next = {
+    ...current,
+    access_token: acc.access_token,
+    refresh_token: acc.refresh_token || current.refresh_token,
+    expiry_date: acc.expiry_date,
+    token_type: current.token_type || 'Bearer',
+    ...(acc.scope ? { scope: acc.scope } : {}),
+  };
+  fs.mkdirSync(path.dirname(CREDS_FILE), { recursive: true });
+  const tmp = CREDS_FILE + '.bridge.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+  fs.renameSync(tmp, CREDS_FILE);
+}
+
+function bootstrapNative() {
+  const creds = readNativeCreds();
+  if (!creds || (!creds.refresh_token && !creds.access_token)) return;
+  let acc = store.accounts.find((a) => a.native);
+  if (!acc) {
+    acc = {
+      id: 'native',
+      email: emailFromIdToken(creds.id_token) || 'antigravity session',
+      native: true,
+      createdAt: Date.now(),
+    };
+    store.accounts.unshift(acc);
+  }
+  // The shared file wins only when it is strictly newer than what we hold: after
+  // a bridge-side refresh our copy is authoritative and must not be clobbered.
+  const fileNewer = !acc.expiry_date || (creds.expiry_date || 0) > acc.expiry_date;
+  acc.refresh_token = creds.refresh_token || acc.refresh_token;
+  if (fileNewer) {
+    acc.access_token = creds.access_token || acc.access_token;
+    acc.expiry_date = creds.expiry_date || acc.expiry_date;
+  }
+  saveStore();
+}
+
+export function loadStore() {
+  if (store) return store;
+  let parsed = null;
+  try {
+    // A BOM or a torn write must not silently wipe the pool: the file is copied
+    // aside and the failure logged before starting from an empty store.
+    const text = fs.readFileSync(STORE_FILE, 'utf8').replace(/^\uFEFF/, '');
+    parsed = JSON.parse(text);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      try {
+        fs.copyFileSync(STORE_FILE, `${STORE_FILE}.broken-${Date.now()}`);
+      } catch {}
+      log(`store unreadable (${err.message}); kept a copy and starting fresh`);
+    }
+  }
+  store = {
+    accounts: Array.isArray(parsed && parsed.accounts) ? parsed.accounts : [],
+    pinned: (parsed && parsed.pinned) || null,
+  };
+  bootstrapNative();
+  return store;
+}
+
+// -------------------------------------------------------------------- tokens
+
+async function refreshAccount(acc) {
+  if (!acc.refresh_token) {
+    throw Object.assign(new Error(`account ${acc.id} has no refresh_token`), { status: 401 });
+  }
+  const body = new URLSearchParams({
+    client_id: clientId(),
+    client_secret: clientSecret(),
+    refresh_token: acc.refresh_token,
+    grant_type: 'refresh_token',
+  });
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw Object.assign(
+      new Error(`token refresh failed for ${acc.id}: ${json.error || res.status} ${json.error_description || ''}`.trim()),
+      { status: res.status, account: acc.id },
+    );
+  }
+  acc.access_token = json.access_token;
+  acc.expiry_date = Date.now() + (json.expires_in || 3600) * 1000;
+  if (json.scope) acc.scope = json.scope;
+  saveStore();
+  if (acc.native) writeNativeCreds(acc);
+  return acc;
+}
+
+export async function accountToken(acc, { force = false } = {}) {
+  const fresh = acc.expiry_date && acc.expiry_date - Date.now() > 120_000;
+  if (!force && acc.access_token && fresh) return acc.access_token;
+  if (!refreshing.has(acc.id)) {
+    refreshing.set(
+      acc.id,
+      refreshAccount(acc).finally(() => refreshing.delete(acc.id)),
+    );
+  }
+  const next = await refreshing.get(acc.id);
+  return next.access_token;
+}
+
+// ---------------------------------------------------------------- cloud calls
+
+/**
+ * `fetch failed` is undici's wrapper around a socket-level failure; the reason
+ * that actually matters lives on `.cause`. Without it the log says nothing.
+ */
+export function networkReason(err) {
+  const code = err && err.cause && err.cause.code;
+  return code ? `${err.message} (${code})` : String(err && err.message);
+}
+
+// The tunnel can die after the CONNECT succeeds — that is how the GeoHide legs
+// fail, since a dead proxy still accepts TCP and only the TLS underneath falls
+// over. Those are worth another go; a 4xx is not.
+const RETRYABLE = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|other side closed|TLS|SSL/i;
+
+export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {}) {
+  // A relay is any HTTPS base that forwards `/<path>` to the Cloud Code API, so a
+  // Cloudflare Worker or a small VPS can carry the call when a local proxy is not
+  // an option. Same paths, same headers, same streaming.
+  // Cached read on purpose: forcing it here did a synchronous file read and a full
+  // JSON parse on every upstream call, blocking the event loop mid-stream.
+  const relay = String(readConfig().relay || '').replace(/\/$/, '');
+  const call = (tok) =>
+    fetch((relay || API) + pathname, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + tok,
+        'content-type': 'application/json',
+        'user-agent': USER_AGENT,
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    if (signal && signal.aborted) throw lastError || new Error('aborted');
+    try {
+      let res = await call(await accountToken(acc));
+      if (res.status === 401) res = await call(await accountToken(acc, { force: true }));
+      return res;
+    } catch (err) {
+      lastError = err;
+      // A cancelled turn must not be retried, and neither must a logic error.
+      if ((signal && signal.aborted) || !RETRYABLE.test(networkReason(err))) throw err;
+      if (attempt === retries) break;
+      log(`cloudPost ${pathname} ${networkReason(err)} — retry ${attempt + 1}/${retries}`);
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+/** Project id + subscription tier of one account, cached on the account record. */
+export async function accountMeta(acc, { force = false } = {}) {
+  if (!force && acc.project && acc.tier && Date.now() - (acc.metaAt || 0) < META_TTL) return acc;
+  try {
+    const res = await cloudPost(acc, '/v1internal:loadCodeAssist', {
+      metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      acc.project = json.cloudaicompanionProject || acc.project || DEFAULT_PROJECT;
+      acc.tier = (json.paidTier && json.paidTier.id) || (json.currentTier && json.currentTier.id) || acc.tier;
+      acc.tierName =
+        (json.paidTier && json.paidTier.name) || (json.currentTier && json.currentTier.name) || acc.tierName;
+      acc.metaAt = Date.now();
+      saveStore();
+    }
+  } catch (err) {
+    log(`loadCodeAssist failed for ${acc.id}: ${err.message}`);
+  }
+  return acc;
+}
+
+/** Raw fetchAvailableModels payload for one account, cached. */
+export async function accountModels(acc, { force = false } = {}) {
+  const cached = modelsCache.get(acc.id);
+  if (!force && cached && Date.now() - cached.at < MODELS_TTL) return cached;
+  await accountMeta(acc);
+  const res = await cloudPost(acc, '/v1internal:fetchAvailableModels', acc.project ? { project: acc.project } : {});
+  if (!res.ok) {
+    throw Object.assign(new Error(`fetchAvailableModels ${res.status} for ${acc.id}`), { status: res.status });
+  }
+  const json = await res.json();
+  const entry = { at: Date.now(), models: json.models || {} };
+  modelsCache.set(acc.id, entry);
+  return entry;
+}
+
+const INTERESTING = (id) => {
+  if (id.startsWith('tab_') || id.startsWith('chat_')) return false;
+  if (/gemini-[12](\.|$|-)/.test(id)) return false;
+  return true;
+};
+
+/** Per-model remaining quota of one account, as fractions of the window. */
+export async function accountQuota(acc, { force = false } = {}) {
+  const entry = await accountModels(acc, { force });
+  const models = {};
+  for (const [id, info] of Object.entries(entry.models)) {
+    if (!INTERESTING(id) || !info || !info.quotaInfo) continue;
+    models[id] = {
+      fraction: typeof info.quotaInfo.remainingFraction === 'number' ? info.quotaInfo.remainingFraction : 1,
+      resetTime: info.quotaInfo.resetTime || null,
+    };
+  }
+  return { at: entry.at, models };
+}
+
+// ------------------------------------------------------------------ selection
+
+export function markCooling(acc, model, untilMs) {
+  cooldowns.set(`${acc.id}|${model}`, Math.max(untilMs || Date.now() + 120_000, Date.now() + 15_000));
+}
+
+function cooldownFor(acc, model) {
+  return Math.max(cooldowns.get(`${acc.id}|${model}`) || 0, cooldowns.get(`${acc.id}|*`) || 0);
+}
+
+/**
+ * Accounts ranked for one model: not cooling first, then by remaining quota
+ * headroom, with the operator's pinned account promoted to the front.
+ */
+export function orderedAccounts(model) {
+  const current = loadStore();
+  const now = Date.now();
+  const scored = current.accounts
+    .filter((acc) => acc.enabled !== false)
+    .map((acc) => {
+      const until = cooldownFor(acc, model);
+      const quota = modelsCache.get(acc.id);
+      const known = quota && quota.models && quota.models[model] && quota.models[model].quotaInfo;
+      const fraction = known && typeof known.remainingFraction === 'number' ? known.remainingFraction : 0.5;
+      return { acc, until, cooling: until > now, fraction };
+    });
+  const live = scored.filter((s) => !s.cooling).sort((a, b) => b.fraction - a.fraction);
+  const waiting = scored.filter((s) => s.cooling).sort((a, b) => a.until - b.until);
+  const ordered = [...live, ...waiting].map((s) => s.acc);
+  const pinned = current.pinned;
+  if (pinned) {
+    const index = ordered.findIndex((acc) => acc.id === pinned);
+    if (index > 0) ordered.unshift(...ordered.splice(index, 1));
+  }
+  return ordered;
+}
+
+export function cooldownSnapshot() {
+  const now = Date.now();
+  const out = [];
+  for (const [key, until] of cooldowns) {
+    if (until > now) {
+      const [account, model] = key.split('|');
+      out.push({ account, model, until });
+    }
+  }
+  return out;
+}
+
+export function primaryAccount() {
+  const current = loadStore();
+  return orderedAccounts('*')[0] || current.accounts[0] || null;
+}
+
+// -------------------------------------------------------------- account CRUD
+
+export function listAccounts({ withQuota = false } = {}) {
+  const current = loadStore();
+  const base = current.accounts.map((acc) => ({
+    id: acc.id,
+    email: acc.email || acc.id,
+    native: Boolean(acc.native),
+    enabled: acc.enabled !== false,
+    pinned: current.pinned === acc.id,
+    project: acc.project || null,
+    tier: acc.tier || null,
+    tierName: acc.tierName || null,
+    hasToken: Boolean(acc.refresh_token),
+  }));
+  if (!withQuota) return base;
+  return base;
+}
+
+export async function limitsReport({ force = false } = {}) {
+  const current = loadStore();
+  const accounts = await Promise.all(
+    current.accounts.map(async (acc) => {
+      const row = {
+        id: acc.id,
+        email: acc.email || acc.id,
+        native: Boolean(acc.native),
+        pinned: current.pinned === acc.id,
+        tier: acc.tier || null,
+        tierName: acc.tierName || null,
+      };
+      try {
+        const quota = await accountQuota(acc, { force });
+        row.ok = true;
+        row.project = acc.project || null;
+        row.tier = acc.tier || null;
+        row.tierName = acc.tierName || null;
+        row.models = quota.models;
+        row.at = quota.at;
+      } catch (err) {
+        row.ok = false;
+        row.error = err.message;
+      }
+      return row;
+    }),
+  );
+  return {
+    accounts,
+    pinned: current.pinned,
+    cooldowns: cooldownSnapshot(),
+    updatedAt: Date.now(),
+  };
+}
+
+export function removeAccount(id) {
+  const current = loadStore();
+  const index = current.accounts.findIndex((acc) => acc.id === id);
+  if (index < 0) return false;
+  if (current.accounts[index].native) return false;
+  current.accounts.splice(index, 1);
+  if (current.pinned === id) current.pinned = null;
+  modelsCache.delete(id);
+  saveStore();
+  return true;
+}
+
+export function setPinned(id) {
+  const current = loadStore();
+  if (id && !current.accounts.some((acc) => acc.id === id)) return false;
+  current.pinned = id || null;
+  saveStore();
+  return true;
+}
+
+export function setEnabled(id, enabled) {
+  const current = loadStore();
+  const acc = current.accounts.find((a) => a.id === id);
+  if (!acc) return false;
+  if (acc.native && !enabled) return false;
+  acc.enabled = Boolean(enabled);
+  saveStore();
+  return true;
+}
+
+// -------------------------------------------------------------------- OAuth
+
+const REDIRECT_URI = () => `http://127.0.0.1:${process.env.AG_BRIDGE_PORT || 8787}/oauth/callback`;
+
+export function startLogin() {
+  const verifier = crypto.randomBytes(48).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const state = crypto.randomBytes(16).toString('hex');
+  pendingLogins.set(state, { verifier, at: Date.now() });
+  for (const [key, value] of pendingLogins) {
+    if (Date.now() - value.at > 10 * 60_000) pendingLogins.delete(key);
+  }
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.searchParams.set('client_id', clientId());
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('redirect_uri', REDIRECT_URI());
+  url.searchParams.set('scope', SCOPES);
+  url.searchParams.set('access_type', 'offline');
+  url.searchParams.set('prompt', 'consent');
+  url.searchParams.set('include_granted_scopes', 'true');
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('state', state);
+  return { url: url.toString(), state };
+}
+
+export async function completeLogin(code, state) {
+  const pending = pendingLogins.get(state);
+  if (!pending) throw new Error('unknown or expired login state');
+  pendingLogins.delete(state);
+  const body = new URLSearchParams({
+    client_id: clientId(),
+    client_secret: clientSecret(),
+    code,
+    code_verifier: pending.verifier,
+    grant_type: 'authorization_code',
+    redirect_uri: REDIRECT_URI(),
+  });
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`code exchange failed: ${json.error || res.status} ${json.error_description || ''}`.trim());
+  }
+  const email = emailFromIdToken(json.id_token) || 'account ' + Date.now();
+  const current = loadStore();
+  const id = 'acc_' + crypto.createHash('sha1').update(email).digest('hex').slice(0, 8);
+  let acc = current.accounts.find((a) => a.id === id);
+  if (!acc) {
+    acc = { id, email, native: false, createdAt: Date.now() };
+    current.accounts.push(acc);
+  }
+  acc.email = email;
+  acc.refresh_token = json.refresh_token || acc.refresh_token;
+  acc.access_token = json.access_token;
+  acc.expiry_date = Date.now() + (json.expires_in || 3600) * 1000;
+  if (json.scope) acc.scope = json.scope;
+  saveStore();
+  modelsCache.delete(id);
+  await accountMeta(acc, { force: true });
+  await accountModels(acc, { force: true }).catch(() => {});
+  return acc;
+}

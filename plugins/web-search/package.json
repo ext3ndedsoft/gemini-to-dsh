@@ -1,0 +1,11 @@
+{
+  "name": "dsh-plugin-web-search",
+  "version": "0.1.0",
+  "description": "Web search provider for the DSH web seam: keyed APIs first, DuckDuckGo HTML as the keyless fallback",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "license": "MIT"
+}

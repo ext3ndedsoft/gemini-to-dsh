@@ -1,0 +1,21 @@
+{
+  "name": "dsh-plugin-quota-overlay",
+  "version": "0.1.0",
+  "description": "Quota overlay for the DSH shell: per-model remaining quota from a local bridge, plus egress controls",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,41 @@
+# Installed packages. Rebuilt from package.json/lockfile, never reviewed as source,
+# so committing them only adds noise and merge conflicts.
+node_modules/
+
+# Logs and runtime noise. Machine-specific paths, timestamps and request bodies —
+# and a log file can contain prompts or tokens that should not leave the host.
+*.log
+bridge.err.log
+probe.log
+
+# Debug capture of one failing request kept for offline replay. It is a full request
+# body: prompts, and sometimes an authorization header. Local only, by definition.
+failing-request.json
+
+# Secrets. `.env` holds real values; `.env.*` catches .env.local/.env.production and
+# every other variant. The negation keeps the committed template tracked even though
+# the wildcard above would otherwise swallow it.
+.env
+.env.*
+!.env.example
+
+# Machine-local state: the account list, OAuth tokens, egress routing and the bridge
+# shared secret. Every install generates its own; a leaked one is a leaked credential.
+*.local.json
+ag-accounts.json
+accounts.json
+ag-oauth.json
+ag-egress.json
+ag-bridge.secret
+ag-call-signatures.json
+search.json
+
+# Build and test output, editor/OS artefacts, and scratch scripts. Generated or
+# personal, so they must never land in a release diff.
+coverage/
+dist/
+*.bak
+_*.mjs
+_*.json
+.DS_Store
+Thumbs.db

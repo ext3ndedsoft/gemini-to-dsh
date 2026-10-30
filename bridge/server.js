@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+/**
+ * gemini-to-dsh-bridge — OpenAI-compatible endpoint for Antigravity's Cloud Code
+ * transport. Lets any OpenAI client (DSH included) drive Gemini 3.8 Flash with
+ * native tool calling, using the OAuth session already present in
+ * ~/.gemini/oauth_creds.json.
+ *
+ *   POST /v1/chat/completions   (stream + non-stream, tools, images)
+ *   GET  /v1/models
+ *   GET  /health
+ *
+ * This file is routing and nothing else: the protocol work lives in lib/.
+ *   lib/config.js      settings, model aliases
+ *   lib/http.js        body parsing, JSON/SSE replies, error envelopes
+ *   lib/schema.js      tool declarations and thinking configuration
+ *   lib/messages.js    OpenAI messages -> Gemini contents
+ *   lib/signatures.js  thought-signature cache (memory + disk)
+ *   lib/thinking.js    thinking tags -> reasoning channel
+ *   lib/upstream.js    request assembly, account rotation
+ *   lib/stream.js      streamed completions (with empty-answer retry)
+ *   lib/complete.js    non-streamed completions (same retry)
+ */
+
+import crypto from 'node:crypto';
+import http from 'node:http';
+
+import {
+  completeLogin,
+  limitsReport,
+  listAccounts,
+  loadStore,
+  removeAccount,
+  setEnabled,
+  setPinned,
+  startLogin,
+} from './accounts.js';
+import { HOST, MODEL_ALIASES, PORT, SHARED_SECRET, log } from './lib/config.js';
+import {
+  htmlPage,
+  isLocal,
+  jsonBody,
+  openAiError,
+  sendJson,
+} from './lib/http.js';
+import { handleOnce } from './lib/complete.js';
+import { saveSignatures } from './lib/signatures.js';
+import { handleStream } from './lib/stream.js';
+import { getCatalog } from './lib/upstream.js';
+
+async function handleModels(res) {
+  let catalog = {};
+  try {
+    catalog = await getCatalog();
+  } catch (err) {
+    log('catalog failed: ' + err.message);
+  }
+  const data = [];
+  for (const [id, meta] of Object.entries(catalog)) {
+    if (id.startsWith('tab_') || id.startsWith('chat_')) continue;
+    data.push({
+      id,
+      object: 'model',
+      owned_by: 'antigravity',
+      context_window: meta.maxTokens || 1_048_576,
+      max_output_tokens: meta.maxOutputTokens || 65_536,
+    });
+  }
+  for (const [alias, target] of MODEL_ALIASES) {
+    if (data.some((model) => model.id === alias)) continue;
+    const meta = catalog[target] || {};
+    data.push({
+      id: alias,
+      object: 'model',
+      owned_by: 'antigravity',
+      context_window: meta.maxTokens || 1_048_576,
+      max_output_tokens: meta.maxOutputTokens || 65_536,
+    });
+  }
+  sendJson(res, 200, { object: 'list', data });
+}
+
+function authorized(req) {
+  const header = req.headers.authorization || '';
+  const provided = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  const expected = Buffer.from(SHARED_SECRET);
+  const actual = Buffer.from(provided);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+async function handleAccountRoutes(req, res, url) {
+  if (!isLocal(req)) return openAiError(res, 403, 'local access only', 'forbidden');
+  // Loopback is not a browser boundary: any page open on this machine is "local"
+  // too. A text/plain POST is a simple request and would reach these handlers
+  // without a preflight, so state changes require JSON, and a cross-origin caller
+  // is refused before the body is read.
+  if (req.method !== 'GET') {
+    const origin = req.headers.origin;
+    if (origin && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(origin)) {
+      return openAiError(res, 403, 'cross-origin writes are refused', 'forbidden');
+    }
+    const type = String(req.headers['content-type'] || '').toLowerCase();
+    if (!type.startsWith('application/json')) {
+      return openAiError(res, 415, 'content-type must be application/json', 'unsupported_media_type');
+    }
+  }
+  try {
+    if (req.method === 'GET' && url.pathname === '/limits') {
+      return sendJson(res, 200, await limitsReport({ force: url.searchParams.get('force') === '1' }));
+    }
+    if (req.method === 'GET' && url.pathname === '/accounts') {
+      return sendJson(res, 200, { accounts: listAccounts(), pinned: loadStore().pinned });
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/login') {
+      return sendJson(res, 200, startLogin());
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/pin') {
+      const body = await jsonBody(req).catch(() => ({}));
+      if (!setPinned(body.id || null)) return openAiError(res, 404, 'unknown account');
+      return sendJson(res, 200, { ok: true, pinned: loadStore().pinned });
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/enabled') {
+      const body = await jsonBody(req).catch(() => ({}));
+      if (!setEnabled(body.id, body.enabled !== false)) return openAiError(res, 400, 'cannot change that account');
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/remove') {
+      const body = await jsonBody(req).catch(() => ({}));
+      if (!removeAccount(body.id)) return openAiError(res, 400, 'cannot remove that account');
+      return sendJson(res, 200, { ok: true });
+    }
+    return openAiError(res, 404, 'not found');
+  } catch (err) {
+    log('account route failed: ' + err.message);
+    return openAiError(res, 500, err.message);
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://' + HOST + ':' + PORT);
+
+  // The DSH widget is a browser page on another port, so every response is
+  // CORS-enabled; the bridge only listens on loopback anyway. Reflecting *any*
+  // origin would let an unrelated page in the same browser read /accounts (the
+  // account e-mails) and drive /v1/chat/completions on the operator's quota, so
+  // only loopback origins are echoed back. Requests without an Origin header are
+  // not browsers and are left alone.
+  const origin = req.headers.origin;
+  if (!origin) {
+    res.setHeader('access-control-allow-origin', '*');
+  } else if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(origin)) {
+    res.setHeader('access-control-allow-origin', origin);
+  } else {
+    // Deliberately no allow-origin header: the browser then refuses to read the
+    // response, while the request itself still works for non-browser callers.
+    log(`cors: refused origin ${origin}`);
+  }
+  res.setHeader('access-control-allow-headers', 'authorization, content-type');
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('vary', 'origin');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    return res.end();
+  }
+
+  if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
+    return sendJson(res, 200, { ok: true, service: 'gemini-to-dsh-bridge', port: PORT });
+  }
+
+  // Reached by a browser redirect from Google, so it carries no bridge token.
+  if (req.method === 'GET' && url.pathname === '/oauth/callback') {
+    const error = url.searchParams.get('error');
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    if (error) return htmlPage(res, 400, 'Login rejected', error);
+    if (!code || !state) return htmlPage(res, 400, 'Login failed', 'missing code or state');
+    try {
+      const account = await completeLogin(code, state);
+      log(`added account ${account.email}`);
+      const detail = [account.email, account.tierName || account.tier, account.project].filter(Boolean).join(' · ');
+      return htmlPage(res, 200, 'Account added', detail);
+    } catch (err) {
+      return htmlPage(res, 400, 'Login failed', err.message);
+    }
+  }
+
+  // Operator-facing surface for the DSH limits widget.
+  if (url.pathname === '/limits' || url.pathname.startsWith('/accounts')) {
+    return handleAccountRoutes(req, res, url);
+  }
+
+  if (!authorized(req)) {
+    return openAiError(res, 401, 'invalid bridge token', 'invalid_api_key');
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/models') {
+    return handleModels(res);
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+    let body;
+    try {
+      body = await jsonBody(req);
+    } catch (err) {
+      return openAiError(res, err.status || 400, err.message);
+    }
+    if (!body || !Array.isArray(body.messages)) {
+      return openAiError(res, 400, 'messages must be an array');
+    }
+    try {
+      // What actually fills the prompt: tool schemas are the usual suspect, and
+      // without this line the only place to see their weight is the client UI.
+      const toolChars = Array.isArray(body.tools) ? JSON.stringify(body.tools).length : 0;
+      const messageChars = JSON.stringify(body.messages).length;
+      log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
+      if (body.stream) await handleStream(req, res, body);
+      else await handleOnce(req, res, body);
+    } catch (err) {
+      log('request failed: ' + (err.stack || err.message));
+      openAiError(res, 500, err.message);
+    }
+    return;
+  }
+
+  openAiError(res, 404, 'not found');
+});
+
+server.requestTimeout = 0;
+server.headersTimeout = 120_000;
+server.keepAliveTimeout = 90_000;
+
+server.listen(PORT, HOST, () => {
+  log(`gemini-to-dsh-bridge listening on http://${HOST}:${PORT}`);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    saveSignatures();
+    process.exit(0);
+  });
+}
+process.on('exit', saveSignatures);

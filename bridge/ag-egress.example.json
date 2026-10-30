@@ -1,0 +1,53 @@
+{
+  "enabled": true,
+  "route": "bezmezhau",
+  "routeChain": [
+    "bezmezhau",
+    "geohideeu",
+    "geohide",
+    "magicdns",
+    "direct"
+  ],
+  "allow": [
+    "*.googleapis.com",
+    "googleapis.com"
+  ],
+  "fallback": "direct",
+  "connectTimeout": 15000,
+  "providers": {
+    "bezmezhau": {
+      "dns": [
+        "181.215.40.49",
+        "31.58.216.201"
+      ],
+      "seeds": [
+        "cloudaicompanion.googleapis.com"
+      ]
+    },
+    "geohideeu": {
+      "dns": [
+        "143.20.64.192",
+        "45.13.237.213"
+      ],
+      "seeds": [
+        "cloudaicompanion.googleapis.com"
+      ]
+    },
+    "geohide": {
+      "dns": [
+        "193.233.112.88",
+        "193.233.112.67",
+        "159.194.200.33"
+      ]
+    },
+    "magicdns": {
+      "dns": [
+        "109.120.132.43",
+        "94.249.177.102"
+      ],
+      "seeds": [
+        "cloudaicompanion.googleapis.com"
+      ]
+    }
+  }
+}

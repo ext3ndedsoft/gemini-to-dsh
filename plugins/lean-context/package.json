@@ -1,0 +1,11 @@
+{
+  "name": "dsh-plugin-lean-context",
+  "version": "0.1.0",
+  "description": "Clear old tool results from the DSH session surface so long sessions stop growing",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "license": "MIT"
+}
