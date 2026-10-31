@@ -19,6 +19,11 @@ export const DEFAULT_PROJECT = 'aicode-consumers';
 export const SIGNATURE_FILE =
   process.env.AG_SIGNATURE_FILE || path.join(os.homedir(), '.dsh', 'ag-call-signatures.json');
 
+/** Which model draws pictures, where the files land, and whether plain words route to it. */
+export const DEFAULT_IMAGE_MODEL = process.env.AG_IMAGE_MODEL || 'gemini-3.1-flash-image';
+export const IMAGE_DIR = process.env.AG_IMAGE_DIR || path.join(os.homedir(), '.dsh', 'images');
+export const IMAGE_AUTO = process.env.AG_IMAGE_AUTO || '1';
+
 /** `from=to,from2=to2` — lets the caller use a short name the UI knows. */
 export const MODEL_ALIASES = (process.env.AG_MODEL_ALIASES || `${DEFAULT_MODEL}=${DEFAULT_MODEL}-tiered`)
   .split(',')

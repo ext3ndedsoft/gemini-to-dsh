@@ -110,6 +110,21 @@ Point a provider at the loopback port. Minimal profile patch:
 
 The bridge accepts any `Authorization` value that matches `AG_BRIDGE_SECRET` (default `local-bridge`), so the provider entry just needs that bearer.
 
+## Images
+
+Every model in the harness can draw — in plain words, no command. "Draw a cat" goes to `gemini-3.1-flash-image` even when the profile is set to a text model: the bridge reads the last user message and, if it asks for a picture, swaps in the image model itself. Nothing to select in DSH.
+
+The answer comes back as a path: the picture lands in `~/.dsh/images/` and the text carries `![generated image](path)`, which DSH renders. If the model stays silent there is still a "Generated an image." line, because an empty answer is indistinguishable from a broken one.
+
+What routes to image generation:
+
+- verb plus subject — "draw a fox", "generate an image of a lighthouse", "make a cyberpunk poster", «нарисуй кота»;
+- editing an existing picture — attach it and say "redraw this in watercolor".
+
+What does not: "what is in this picture", "describe the photo", «проанализируй изображение» — that is reading, and it stays with the ordinary model, which already sees images.
+
+Three knobs: `AG_IMAGE_MODEL` picks the model, `AG_IMAGE_DIR` the folder, `AG_IMAGE_AUTO=0` turns the word routing off so only the model name counts. Details and how to swap the provider — [docs/images.md](docs/images.md).
+
 ## Configuration
 
 Everything is env-first; the [`.env.example`](.env.example) lists every variable the bridge itself reads, with its default in a comment. (The plugins read a few of their own — `AG_BRIDGE_URL`, `AG_EGRESS_URL`, `WARP_CLI` — documented in each plugin's README.) The ones that matter most:
@@ -125,6 +140,9 @@ Everything is env-first; the [`.env.example`](.env.example) lists every variable
 | `AG_EGRESS_BUDGET` | `6000` | Total budget for one CONNECT, all channels |
 | `AG_WATCHDOG_MS` | `120000` | Watchdog interval |
 | `AG_PACE_MS` | `30` | Text drip cadence; `AG_PACE=0` disables |
+| `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Which model draws pictures |
+| `AG_IMAGE_DIR` | `~/.dsh/images` | Where generated files land |
+| `AG_IMAGE_AUTO` | `1` | `0` stops routing plain words to drawing |
 | `AG_CLIENT_ID` / `AG_CLIENT_SECRET` | — | OAuth client for token refresh |
 | `DSH_SEARCH_CONFIG` | `~/.dsh/search.json` | Keys for the search plugin |
 

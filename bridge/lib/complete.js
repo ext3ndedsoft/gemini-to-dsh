@@ -38,6 +38,9 @@ export async function handleOnce(req, res, body) {
         return openAiError(res, errorStatus(status), message.slice(0, 800) || 'upstream error', 'upstream_' + status);
       }
       log(`upstream ${status} on attempt ${attempt + 1} for ${model}; retrying degraded`);
+      // Back off a little: a relay that just answered 502 in 40 ms is usually
+      // healthy again a second later, and an instant retry lands in the same hole.
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       continue;
     }
 

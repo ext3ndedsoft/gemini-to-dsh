@@ -30,6 +30,7 @@ The bearer is `Authorization: Bearer $AG_BRIDGE_SECRET` (default `local-bridge`,
 | `egress-ctl.mjs` | CLI: `status`, `use`, `add`, `check`, `bench`, `race`, `on`, `off` |
 | `dns-fix.js` | Fallback resolver for poisoned local DNS |
 | `lib/` | Protocol translation, streaming, schemas, pacing |
+| `lib/images.js` | Image routing and file output; the one place a provider swap happens |
 
 One deliberate non-feature: the bridge never rewrites the conversation. System messages are joined in order, assistant text is passed through as it is generated, and a refusal is delivered like any other answer. The single exception is a turn the model leaves completely empty: the retry ladder then appends a short system line asking for the answer it forgot. Prompt engineering belongs to the client that writes the prompts.
 
@@ -43,6 +44,10 @@ One deliberate non-feature: the bridge never rewrites the conversation. System m
 
 `finish_reason` is `length` when the model hit `max_tokens`, `tool_calls` when a tool was called, `stop` otherwise.
 
+## Images
+
+A turn that asks for a picture — by naming an image model, or in words — is handled by `lib/images.js` instead of the text path: the request is re-pointed at `AG_IMAGE_MODEL`, tools are stripped, and the returned `inlineData` is written to `AG_IMAGE_DIR`. The client gets markdown pointing at the absolute path, plus an `images` array. `AG_IMAGE_AUTO=0` keeps the model-by-name route and drops the word route. Routing rules, the duplicate-frame handling and how to swap the backend are in [../docs/images.md](../docs/images.md).
+
 ## Egress
 
 Channel selection, the resolve-cache, the 6-second CONNECT budget and the TLS-probing watchdog are documented in [../docs/channels.md](../docs/channels.md). The short version:
@@ -55,8 +60,9 @@ Channel selection, the resolve-cache, the 6-second CONNECT budget and the TLS-pr
 ## Tests
 
 ```bash
-npm test                  # unit + egress + integration
+npm test                  # unit + images + egress + integration
 npm run test:unit         # translation, schemas, pacing — offline
+npm run test:images       # intent routing and file output — offline
 npm run test:egress       # channels, watchdog, config, the settings surface
 npm run test:integration  # spawning server against a mock Cloud Code — offline
 npm run test:proxy        # CONNECT through a local proxy, end to end — network

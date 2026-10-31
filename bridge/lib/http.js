@@ -83,6 +83,19 @@ export function resetHint(text) {
   return Number.isFinite(at) ? at : null;
 }
 
+/**
+ * A relay that dies answers with its own nginx page. That HTML is useless to the
+ * client and unreadable in a chat, so it becomes one sentence that says what
+ * happened and who is to blame.
+ */
+function readableFailure(text) {
+  if (!/^\s*</.test(text || '')) return text;
+  const title = (text.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1];
+  const server = (text.match(/\b(nginx|cloudflare|openresty|envoy|Caddy)\b[\s/]*[\d.]*/i) || [])[0];
+  const head = (title || 'an HTML error page').trim();
+  return `the egress relay answered with ${head}${server ? ` (${server})` : ''} — nothing upstream is down, the channel is`;
+}
+
 /** Unwrap `{error:{message}}` so the client sees Google's sentence, not the JSON. */
 export async function upstreamErrorText(res) {
   const text = await res.text().catch(() => '');
@@ -90,7 +103,7 @@ export async function upstreamErrorText(res) {
     const parsed = JSON.parse(text);
     return { message: (parsed.error && parsed.error.message) || text, status: res.status };
   } catch {
-    return { message: text, status: res.status };
+    return { message: readableFailure(text), status: res.status };
   }
 }
 
