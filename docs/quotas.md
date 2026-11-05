@@ -71,6 +71,29 @@ the one with the most left still wins.
 When the upstream answers `429`, the account is marked cooling and the request moves to the
 next one in the same call, so a refusal costs a retry instead of a failed turn.
 
+### Moving a session by hand
+
+Quota shares say nothing about a tenant whose shard is having a bad day: an account can show
+100% and still take half a minute to say "привет". Two endpoints cover that, and the panel
+calls both:
+
+- `POST /accounts/switch {"id":"…"}` — pins the account **and** drops every cooldown it
+  collected, then answers with the order the next request will follow, so "did it take?"
+  is a line you can read instead of a guess. `{"id":null}` returns to automatic ordering.
+- `POST /accounts/check {"id":"…"}` — one tiny real request (8 tokens, model
+  `AG_PROBE_MODEL`) timed to its first streamed payload. That number is what the card shows,
+  because quota percentages cannot tell a fast account from a stalled one.
+
+Every real request also records its own time-to-first-token, so the card keeps filling in
+without anyone pressing anything: `latency: {"ms": 2900, "at": 1762...}` per account in
+`/accounts` and `/limits`. Nothing is inferred from a handshake — the clock stops when a
+payload arrives.
+
+Two limits worth knowing: a probe waits up to `AG_PROBE_TIMEOUT_MS` (30 s) and then reports
+"no answer", which is the useful answer for a stalled account; and `AG_QUOTA_WARM_MS`
+(default 180 000) refreshes the five-hour numbers in the background, so ordering still
+honours the 5% rule when no panel is open.
+
 ## In the response
 
 `/limits` keeps its shape and adds one field per account:

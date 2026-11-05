@@ -16,6 +16,7 @@ import { chunkId, errorStatus, openAiError, sseHead, upstreamErrorText, usagePay
 import { Pacer } from './pacer.js';
 import { newCallId, rememberCall } from './signatures.js';
 import { ThinkingStream } from './thinking.js';
+import { recordLatency } from '../accounts.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
 
 export const MAX_ATTEMPTS = 3;
@@ -138,8 +139,13 @@ export async function handleStream(req, res, body) {
     }
 
     let failed = false;
+    let timed = false;
     try {
       for await (const payload of readSse(upstreamRes.body)) {
+        if (!timed && upstreamRes.__agAccount) {
+          timed = true;
+          recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
+        }
         const response = parseSseJson(payload);
         if (!response) continue;
         if (response.usageMetadata) usage = response.usageMetadata;

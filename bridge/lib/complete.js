@@ -8,6 +8,7 @@ import { chunkId, errorStatus, openAiError, sendJson, upstreamErrorText, usagePa
 import { newCallId, rememberCall } from './signatures.js';
 import { MAX_ATTEMPTS, retryBody } from './stream.js';
 import { splitThinking } from './thinking.js';
+import { recordLatency } from '../accounts.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
 
 export async function handleOnce(req, res, body) {
@@ -46,9 +47,14 @@ export async function handleOnce(req, res, body) {
 
     text = '';
     reasoning = '';
+    let timed = false;
     toolCalls.length = 0;
 
     for await (const payload of readSse(upstreamRes.body)) {
+      if (!timed && upstreamRes.__agAccount) {
+        timed = true;
+        recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
+      }
       const response = parseSseJson(payload);
       if (!response) continue;
       if (response.usageMetadata) usage = response.usageMetadata;

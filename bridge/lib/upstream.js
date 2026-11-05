@@ -90,6 +90,7 @@ export async function upstream(body, signal) {
     payload.project = (await getProject(account)) || DEFAULT_PROJECT;
 
     let res;
+    const startedAt = Date.now();
     try {
       res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, { signal });
     } catch (err) {
@@ -99,7 +100,17 @@ export async function upstream(body, signal) {
       continue;
     }
 
-    if (res.ok) return res;
+    if (res.ok) {
+      // The answer has not started until a payload arrives, so time-to-first-token
+      // is recorded where it is read, not where the request is sent.
+      try {
+        res.__agAccount = account;
+        res.__agStartedAt = startedAt;
+      } catch {
+        /* frozen response object: timing is optional */
+      }
+      return res;
+    }
     last = res;
     const rotate = res.status === 429 || res.status === 401 || res.status === 403;
     if (!rotate || index === candidates.length - 1) return res;

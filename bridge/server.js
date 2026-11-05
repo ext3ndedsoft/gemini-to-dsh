@@ -25,14 +25,19 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 
 import {
+  clearCooldowns,
+  cloudPost,
   completeLogin,
   limitsReport,
   listAccounts,
   loadStore,
+  orderedAccounts,
+  recordLatency,
   removeAccount,
   setEnabled,
   setPinned,
   startLogin,
+  warmQuotaSummaries,
 } from './accounts.js';
 import { HOST, MODEL_ALIASES, PORT, SHARED_SECRET, log } from './lib/config.js';
 import {
@@ -46,7 +51,7 @@ import { handleOnce } from './lib/complete.js';
 import { answerText, generate, routeFor } from './lib/images.js';
 import { saveSignatures } from './lib/signatures.js';
 import { handleStream } from './lib/stream.js';
-import { getCatalog } from './lib/upstream.js';
+import { buildRequest, getCatalog, getProject } from './lib/upstream.js';
 
 async function handleModels(res) {
   let catalog = {};
@@ -111,6 +116,63 @@ function authorized(req, url) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+const PROBE_MODEL = process.env.AG_PROBE_MODEL || 'gemini-3.8-flash';
+const PROBE_TIMEOUT_MS = Number(process.env.AG_PROBE_TIMEOUT_MS || 30000);
+
+/**
+ * One tiny real request to one account, timed to its first streamed payload.
+ * Quota numbers say nothing about a tenant whose shard is melting; a request
+ * that actually comes back does. Costs a handful of tokens, on purpose.
+ */
+async function probeAccount(id) {
+  const account = loadStore().accounts.find((acc) => acc.id === id);
+  if (!account) return { ok: false, status: 404, error: 'unknown account' };
+  const startedAt = Date.now();
+  try {
+    const payload = buildRequest({
+      model: PROBE_MODEL,
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 8,
+    });
+    payload.project = (await getProject(account)) || undefined;
+    // A slow account is the thing being measured, so the probe has to outlive
+    // the 20 s header budget that protects real turns.
+    const upstreamRes = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      retries: 0,
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text().catch(() => '');
+      return { ok: false, status: upstreamRes.status, error: text.slice(0, 200) || 'upstream ' + upstreamRes.status };
+    }
+    const reader = upstreamRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let first = null;
+    const deadline = Date.now() + PROBE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.includes('data:')) {
+        first = Date.now() - startedAt;
+        break;
+      }
+    }
+    try {
+      await reader.cancel();
+    } catch {
+      /* the body is already gone */
+    }
+    if (first === null) return { ok: false, error: 'no answer in ' + Math.round(PROBE_TIMEOUT_MS / 1000) + ' s' };
+    recordLatency(account, first);
+    return { ok: true, ms: first };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 async function handleAccountRoutes(req, res, url) {
   if (!isLocal(req)) return openAiError(res, 403, 'local access only', 'forbidden');
   // Loopback is not a browser boundary: any page open on this machine is "local"
@@ -141,6 +203,20 @@ async function handleAccountRoutes(req, res, url) {
       const body = await jsonBody(req).catch(() => ({}));
       if (!setPinned(body.id || null)) return openAiError(res, 404, 'unknown account');
       return sendJson(res, 200, { ok: true, pinned: loadStore().pinned });
+    }
+    // "Move this session to that account": pin it, drop whatever cooldown it
+    // collected, and answer with the order the next request will follow.
+    if (req.method === 'POST' && url.pathname === '/accounts/switch') {
+      const body = await jsonBody(req).catch(() => ({}));
+      if (!setPinned(body.id || null)) return openAiError(res, 404, 'unknown account');
+      if (body.id) clearCooldowns(body.id);
+      const order = orderedAccounts(body.model || '*').map((acc) => acc.email || acc.id);
+      log('switch requested -> ' + (loadStore().pinned || 'auto') + ' | order: ' + order.join(' > '));
+      return sendJson(res, 200, { ok: true, pinned: loadStore().pinned, order });
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/check') {
+      const body = await jsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, await probeAccount(body.id));
     }
     if (req.method === 'POST' && url.pathname === '/accounts/enabled') {
       const body = await jsonBody(req).catch(() => ({}));
@@ -324,6 +400,14 @@ const server = http.createServer(async (req, res) => {
 server.requestTimeout = 0;
 server.headersTimeout = 120_000;
 server.keepAliveTimeout = 90_000;
+
+// Keep the five-hour numbers warm so ordering never falls back to "unknown".
+const WARM_MS = Number(process.env.AG_QUOTA_WARM_MS || 180_000);
+if (WARM_MS > 0) {
+  const warm = () => warmQuotaSummaries().catch(() => {});
+  setTimeout(warm, 8_000).unref?.();
+  setInterval(warm, WARM_MS).unref?.();
+}
 
 server.listen(PORT, HOST, () => {
   log(`antigravity-bridge listening on http://${HOST}:${PORT}`);

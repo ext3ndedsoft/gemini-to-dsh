@@ -125,6 +125,13 @@ window.__ModuleLoader__.load({
 	animation:agq-rise .3s cubic-bezier(.2,.9,.25,1) both;transition:border-color .18s,transform .18s,box-shadow .18s}
 .agq .card:hover{border-color:rgba(255,255,255,.16);transform:translateY(-1px);
 	box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.agq .card .lat{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--muted)}
+.agq .card .lat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.agq .card .lat b.none{color:var(--muted);font-weight:500}
+.agq .card .lat .when{margin-right:auto;opacity:.8}
+.agq .card .lat .mini{opacity:.75}
+.agq .card .lat .mini:hover{opacity:1}
+.agq .card .here{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b);opacity:.85}
 .agq .card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .agq .who{flex:1;min-width:0}
 .agq .who b{display:block;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -767,7 +774,40 @@ window.__ModuleLoader__.load({
 			return raw.length > 90 ? raw.slice(0, 87) + "…" : raw;
 		}
 
-		function AccountCard({ account, pinned, onPin, index = 0 }) {
+		// "4 minutes ago" is the part that makes a number trustworthy: a figure from
+		// an hour ago describes an hour ago.
+		function agoOf(at) {
+			if (!at) return "";
+			const sec = Math.max(0, Math.round((Date.now() - at) / 1000));
+			if (sec < 45) return "только что";
+			const min = Math.round(sec / 60);
+			if (min < 60) return min + " мин назад";
+			const hours = Math.round(min / 60);
+			return hours + " ч назад";
+		}
+
+		function latencyLine(account, checking, onCheck) {
+			const lat = account.latency;
+			return h(
+				"div",
+				{ className: "lat" },
+				h("span", null, "ответ"),
+				lat ? h("b", null, (lat.ms / 1000).toFixed(1) + " с") : h("b", { className: "none" }, "—"),
+				h("span", { className: "when" }, lat ? agoOf(lat.at) : "нет замера"),
+				h(
+					"button",
+					{
+						className: "mini",
+						onClick: () => onCheck(account.id),
+						disabled: checking,
+						title: "проверить этот аккаунт маленьким запросом"
+					},
+					checking ? "…" : "проверить"
+				)
+			);
+		}
+
+		function AccountCard({ account, pinned, onSwitch, onCheck, checking, index = 0 }) {
 			const groups = account.groups || [];
 			const models = Object.entries(account.models || {})
 				.filter(([id]) => KEEP_MODEL(id))
@@ -788,9 +828,18 @@ window.__ModuleLoader__.load({
 						h("span", null, [account.tierName, account.native ? "session" : null, account.pinned ? "pinned" : null].filter(Boolean).join(" · ") || "account")
 					),
 					pinned
-						? null
-						: h("button", { className: "mini", onClick: () => onPin(account.id), title: "serve this account first" }, "pin")
+						? h("span", { className: "here" }, "этот")
+						: h(
+								"button",
+								{
+									className: "mini",
+									onClick: () => onSwitch(account.id),
+									title: "перевести следующие запросы на этот аккаунт"
+								},
+								"переключить"
+							)
 				),
+				latencyLine(account, checking, onCheck),
 				!account.ok
 					? h("div", { className: "err" }, explainError(account.error) || "недоступен")
 					: groups.length
@@ -924,14 +973,40 @@ window.__ModuleLoader__.load({
 				egress.reload();
 			};
 
-			const pin = async (id) => {
+			// Switching is a decision, not a preference: pin, drop the cooldowns that
+			// account collected, and let the bridge answer with the order it will use.
+			const switchAccount = async (id) => {
 				try {
-					await fetch(BRIDGE + "/accounts/pin", {
+					const res = await fetch(BRIDGE + "/accounts/switch", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({ id })
 					});
-				} catch {}
+					const json = await res.json().catch(() => ({}));
+					if (json && json.ok) setNote("переключено: " + (json.order && json.order[0] ? json.order[0] : id));
+					else setNote("мост не принял переключение");
+				} catch {
+					setNote("мост не отвечает");
+				}
+				load(true);
+			};
+
+			const [checking, setChecking] = React.useState(null);
+			const checkAccount = async (id) => {
+				setChecking(id);
+				try {
+					const res = await fetch(BRIDGE + "/accounts/check", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ id })
+					});
+					const json = await res.json().catch(() => ({}));
+					if (json && json.ok) setNote("замер: " + (json.ms / 1000).toFixed(1) + " с");
+					else setNote("замер не вышел: " + explainError(json.error || ""));
+				} catch {
+					setNote("мост не отвечает");
+				}
+				setChecking(null);
 				load(true);
 			};
 
@@ -1007,7 +1082,9 @@ h(Transport, {
 												index,
 												account,
 												pinned: account.id === (data && data.pinned),
-												onPin: pin
+												onSwitch: switchAccount,
+							onCheck: checkAccount,
+							checking: checking === account.id
 											})
 										)
 									: h("div", { className: "empty" }, error ? "bridge unreachable" : "no accounts"),

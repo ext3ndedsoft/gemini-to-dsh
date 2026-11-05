@@ -80,6 +80,8 @@ let store = null;
 const modelsCache = new Map();
 /** @type {Map<string, number>} `${accountId}|${model}` -> epoch ms until which the account is skipped */
 const cooldowns = new Map();
+/** @type {Map<string, {ms:number, at:number}>} last measured time-to-first-token */
+const latencies = new Map();
 /** @type {Map<string, Promise<any>>} */
 const refreshing = new Map();
 /** @type {Map<string, {verifier:string, at:number}>} */
@@ -250,12 +252,12 @@ const RETRYABLE = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAI
  * in the log, and the client hung with it. Bound the wait for response headers so
  * a dead tier turns into a retry instead of a hang.
  */
-function headerSignal(signal) {
-  const timeout = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+function headerSignal(signal, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {}) {
+export async function cloudPost(acc, pathname, body, { signal, retries = 2, timeoutMs } = {}) {
   // A relay is any HTTPS base that forwards `/<path>` to the Cloud Code API, so a
   // Cloudflare Worker or a small VPS can carry the call when a local proxy is not
   // an option. Same paths, same headers, same streaming.
@@ -271,7 +273,7 @@ export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {
         'user-agent': USER_AGENT,
       },
       body: JSON.stringify(body),
-      signal: headerSignal(signal),
+      signal: headerSignal(signal, timeoutMs),
     });
 
   let lastError = null;
@@ -419,6 +421,26 @@ export function orderedAccounts(model) {
   return ordered;
 }
 
+/** Time to first token of a live request: what a person means by "how fast". */
+export function recordLatency(acc, ms) {
+  if (!acc || !Number.isFinite(ms) || ms <= 0) return;
+  latencies.set(acc.id, { ms: Math.round(ms), at: Date.now() });
+}
+
+export function latencyOf(id) {
+  return latencies.get(id) || null;
+}
+
+/**
+ * Drop every cooldown this account collected. A switch that leaves the old
+ * "wait five minutes" note behind is a switch the next request ignores.
+ */
+export function clearCooldowns(id) {
+  for (const key of [...cooldowns.keys()]) {
+    if (key.startsWith(id + '|')) cooldowns.delete(key);
+  }
+}
+
 export function cooldownSnapshot() {
   const now = Date.now();
   const out = [];
@@ -450,6 +472,7 @@ export function listAccounts({ withQuota = false } = {}) {
     tier: acc.tier || null,
     tierName: acc.tierName || null,
     hasToken: Boolean(acc.refresh_token),
+    latency: latencies.get(acc.id) || null,
   }));
   if (!withQuota) return base;
   return base;
@@ -478,6 +501,21 @@ async function quotaSummary(acc) {
   }
 }
 
+/**
+ * Fill the five-hour cache without the panel: ordering by the 5h window is only
+ * as fresh as the last /limits call, so a bridge nobody is watching would fall
+ * back to "unknown" and never honour the 5% rule.
+ */
+export async function warmQuotaSummaries() {
+  const current = loadStore();
+  for (const account of current.accounts) {
+    if (account.enabled === false) continue;
+    const cached = quotaSummaryCache.get(account.id);
+    if (cached && Date.now() - cached.at < QUOTA_SUMMARY_TTL) continue;
+    await quotaSummary(account).catch(() => null);
+  }
+}
+
 export async function limitsReport({ force = false } = {}) {
   const current = loadStore();
   const accounts = await Promise.all(
@@ -489,6 +527,7 @@ export async function limitsReport({ force = false } = {}) {
         pinned: current.pinned === acc.id,
         tier: acc.tier || null,
         tierName: acc.tierName || null,
+        latency: latencies.get(acc.id) || null,
       };
       try {
         const quota = await accountQuota(acc, { force });
