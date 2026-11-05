@@ -120,6 +120,8 @@ ${styles}
   .agq .panel-in{max-height:none}
   .agq .scroll{max-height:none;overflow:visible;mask-image:none;flex:none}
   .agq .foot{position:static}
+  /* a screenshot is one frame: settle everything instead of catching the entrance */
+  .agq, .agq *{animation:none !important;transition:none !important;opacity:1 !important}
 </style></head>
 <body>
 <div class="agq">

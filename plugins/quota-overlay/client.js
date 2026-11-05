@@ -62,10 +62,16 @@ window.__ModuleLoader__.load({
 .agq .head h1{font-size:12.5px;font-weight:600;letter-spacing:.02em;margin:0}
 .agq .chip{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
 	border:1px solid var(--line);border-radius:99px;padding:2px 7px}
-.agq .icon{margin-left:auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+.agq .icon{margin-left:auto;width:24px;height:24px;border-radius:7px;display:grid;place-items:center;padding:0;
 	border:1px solid var(--line);color:var(--muted);transition:.15s}
 .agq .icon:hover{color:var(--text);border-color:var(--line-strong);background:rgba(255,255,255,.04)}
-.agq .icon.busy{animation:agq-spin 1s linear infinite;color:var(--b)}
+/* Only the glyph turns. Spinning the button itself rotated its border and padding too, which
+   reads as a wobbly square rather than a refresh. */
+.agq .icon svg{display:block;transition:transform .2s ease}
+.agq .icon.is-busy svg{animation:agq-spin .9s linear infinite}
+.agq .icon.is-busy{color:var(--b);border-color:rgba(124,156,255,.35)}
+.agq .icon[disabled]{opacity:.6;cursor:default}
+.agq .icon:active{transform:scale(.94)}
 @keyframes agq-spin{to{transform:rotate(360deg)}}
 .agq .seg{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:3px;border-radius:12px;
 	background:rgba(255,255,255,.04);border:1px solid var(--line)}
@@ -917,9 +923,36 @@ window.__ModuleLoader__.load({
 				} catch {}
 			};
 
+			// The relay plugin puts its own link in the same corner (fixed, right:16, bottom:16,
+			// huge z-index) and it lands straight on top of this widget. Publishing our width
+			// lets the rule below keep that link to the left of us, at any size, without
+			// touching the other plugin.
+			const rootRef = React.useRef(null);
+			React.useEffect(() => {
+				const style = document.createElement("style");
+				style.id = "agq-relay-offset";
+				style.textContent =
+					"#dsh-relay-link{right:calc(16px + var(--agq-w, 132px) + 10px) !important}";
+				document.head.appendChild(style);
+				const node = rootRef.current;
+				const push = () => {
+					if (!node) return;
+					document.documentElement.style.setProperty("--agq-w", Math.round(node.offsetWidth) + "px");
+				};
+				push();
+				const observer = typeof ResizeObserver === "function" ? new ResizeObserver(push) : null;
+				if (observer && node) observer.observe(node);
+				window.addEventListener("resize", push);
+				return () => {
+					observer?.disconnect();
+					window.removeEventListener("resize", push);
+					style.remove();
+				};
+			}, []);
+
 			return h(
 				"div",
-				{ className: "agq", style: { position: "fixed", right: 14, bottom: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end" } },
+				{ ref: rootRef, className: "agq", style: { position: "fixed", right: 14, bottom: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end" } },
 				open
 					? h(
 							"div",
@@ -935,8 +968,32 @@ window.__ModuleLoader__.load({
 									primary && primary.tierName ? h("span", { className: "chip" }, primary.tierName) : null,
 									h(
 										"button",
-										{ className: "icon" + (loading ? " busy" : ""), onClick: () => load(true), disabled: loading, title: "refresh" },
-										"⟳"
+										{
+											className: "icon" + (loading ? " is-busy" : ""),
+											onClick: () => load(true),
+											disabled: loading,
+											title: "обновить",
+											"aria-label": "обновить"
+										},
+										h(
+											"svg",
+											{ viewBox: "0 0 16 16", width: 13, height: 13, "aria-hidden": "true" },
+											h("path", {
+												d: "M12.9 8a4.9 4.9 0 1 1-1.5-3.5",
+												fill: "none",
+												stroke: "currentColor",
+												"stroke-width": 1.5,
+												"stroke-linecap": "round"
+											}),
+											h("path", {
+												d: "M13.2 2.9v2.8H10.4",
+												fill: "none",
+												stroke: "currentColor",
+												"stroke-width": 1.5,
+												"stroke-linecap": "round",
+												"stroke-linejoin": "round"
+											})
+										)
 									)
 								),
 								h(
