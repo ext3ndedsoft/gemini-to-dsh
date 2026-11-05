@@ -277,6 +277,29 @@ check('mask hides credentials', egress.maskProxy('http://user:secret@1.2.3.4:808
 	const allowed = await post({ proxy: '' }, { origin: 'http://127.0.0.1:3080' });
 	check('settings: loopback JSON write accepted', allowed.status === 200, `status ${allowed.status}`);
 
+	// A proxy address is whatever the person was given: a bare host:port is normal, and a
+	// scheme that is not a proxy scheme must be refused rather than read as HTTP.
+	const bareWrite = await fetch(`http://127.0.0.1:${shim.port}/`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:3080' },
+		body: JSON.stringify({ proxy: '127.0.0.1:3128', mode: 'proxy' })
+	});
+	check('proxy: bare host:port is accepted', bareWrite.status === 200, `status ${bareWrite.status}`);
+	const bareBody = await bareWrite.json();
+	check('proxy: bare host:port is stored as http', String(bareBody.config?.proxy || '').startsWith('http://'), bareBody.config?.proxy);
+
+	const oddScheme = await fetch(`http://127.0.0.1:${shim.port}/`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', origin: 'http://127.0.0.1:3080' },
+		body: JSON.stringify({ proxy: 'ftp://127.0.0.1:21', mode: 'proxy' })
+	});
+	check('proxy: a non-proxy scheme is refused', oddScheme.status === 400, `status ${oddScheme.status}`);
+
+	const checked = await ask('/check?proxy=' + encodeURIComponent('http://127.0.0.1:1'));
+	check('proxy: check reports a dead address instead of throwing', checked.status === 200, `status ${checked.status}`);
+	const checkedBody = JSON.parse(await checked.text());
+	check('proxy: check says not ok for a closed port', checkedBody.ok === false, JSON.stringify(checkedBody).slice(0, 80));
+
 	// /watchdog runs a probe and /bench opens connections: neither is a read, so a
 	// page must not be able to trigger them either.
 	const probeForeign = await ask('/watchdog', 'https://evil.example');

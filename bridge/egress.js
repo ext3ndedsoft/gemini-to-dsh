@@ -231,18 +231,33 @@ export function hostAllowed(host, allow) {
 	return false;
 }
 
+const PROXY_SCHEMES = new Set(['http', 'https', 'socks5', 'socks5h', 'socks']);
+
+/**
+ * Accepts what people actually paste: a full URL with credentials, or a bare `host:port`.
+ * A scheme that is not a proxy scheme is rejected instead of being read as HTTP — a wrong
+ * scheme that silently "works" is worse than a clear refusal, because the address looks
+ * saved while the traffic goes somewhere else.
+ */
 function parseProxy(url) {
 	if (!url) return null;
+	const raw = String(url).trim();
+	if (!raw) return null;
+	const withScheme = /^[a-z0-9+.-]+:\/\//i.test(raw) ? raw : `http://${raw}`;
 	let parsed;
 	try {
-		parsed = new URL(url);
+		parsed = new URL(withScheme);
 	} catch {
 		return null;
 	}
-	const protocol = parsed.protocol.replace(':', '');
+	const protocol = parsed.protocol.replace(':', '').toLowerCase();
+	if (!PROXY_SCHEMES.has(protocol)) return null;
 	const host = parsed.hostname;
+	if (!host) return null;
+	// http:// proxies default to 8080 and socks to 1080, which is how they are sold; an
+	// explicit port always wins.
 	const port = Number(parsed.port || (protocol.startsWith('socks') ? 1080 : 8080));
-	if (!host || !port) return null;
+	if (!port) return null;
 	return {
 		protocol,
 		host,
@@ -997,7 +1012,7 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 					return;
 				}
 			}
-			if (method === 'GET' && (target.startsWith('/bench') || target.startsWith('/watchdog') || target.startsWith('/events')) && origin && !loopbackOrigin) {
+			if (method === 'GET' && (target.startsWith('/bench') || target.startsWith('/watchdog') || target.startsWith('/events') || target.startsWith('/check')) && origin && !loopbackOrigin) {
 				send(403, { ok: false, error: 'cross-origin reads are refused' });
 				return;
 			}
@@ -1033,6 +1048,35 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 					client.write(`data: ${JSON.stringify(describeState())}\n\n`);
 				} catch {
 					sseClients.delete(client);
+				}
+				return;
+			}
+			if (method === 'GET' && target.startsWith('/check')) {
+				// Checking a proxy is the one thing a person wants before committing to it, and
+				// doing it by saving a broken address and watching requests fail is not a check.
+				const query = new URLSearchParams(target.includes('?') ? target.slice(target.indexOf('?')) : '');
+				const candidate = (query.get('proxy') || '').trim();
+				if (!candidate) {
+					send(400, { ok: false, error: 'proxy query param is required' });
+					return;
+				}
+				const parsed = parseProxy(candidate);
+				if (!parsed) {
+					send(400, { ok: false, error: 'proxy must be http://, https://, socks5://host:port' });
+					return;
+				}
+				const host = query.get('host') || PROBE_HOST;
+				const started = Date.now();
+				try {
+					const tunnel = await connectViaProxy(candidate, host, 443, Math.min(12000, Math.max(2000, Number(query.get('timeout') || 8000))));
+					try {
+						tunnel.destroy();
+					} catch {
+						/* already closed */
+					}
+					send(200, { ok: true, ms: Date.now() - started, host, protocol: parsed.protocol });
+				} catch (error) {
+					send(200, { ok: false, ms: Date.now() - started, host, protocol: parsed.protocol, error: error.message });
 				}
 				return;
 			}

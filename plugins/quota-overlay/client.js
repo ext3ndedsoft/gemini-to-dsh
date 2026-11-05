@@ -105,6 +105,10 @@ window.__ModuleLoader__.load({
 .agq .chip-btn.on{color:#0a0a10;font-weight:600;border-color:transparent;
 	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 4px 14px rgba(139,92,246,.35)}
 .agq .hint{font-size:9.5px;color:var(--muted);margin-top:6px;line-height:1.4}
+.agq .parsed{font-size:9.5px;color:var(--muted);margin:5px 2px 0;line-height:1.35;letter-spacing:.01em}
+.agq .parsed.ok{color:#7fe3b0}
+.agq .parsed.bad{color:#ff9a9a}
+.agq .input.bad{border-color:rgba(255,120,120,.55);box-shadow:0 0 0 1px rgba(255,120,120,.18) inset}
 .agq .sect{display:flex;align-items:center;gap:8px;margin:14px 2px 8px;font-size:9.5px;
 	letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .agq .sect:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
@@ -461,63 +465,146 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// One field, several accepted shapes. A person pasting a proxy has it in whatever
+		// form the seller gave them: a full URL with credentials, a socks5 link, or just
+		// host:port. All three mean the same thing to the shim, so the panel normalises
+		// instead of demanding one form.
+		function readProxy(value) {
+			const raw = (value || "").trim();
+			if (!raw) return { ok: false, error: "пусто" };
+			const withScheme = /^[a-z0-9+.-]+:\/\//i.test(raw) ? raw : "http://" + raw;
+			let url;
+			try {
+				url = new URL(withScheme);
+			} catch {
+				return { ok: false, error: "не похоже на адрес" };
+			}
+			const scheme = url.protocol.replace(":", "").toLowerCase();
+			if (!["http", "https", "socks5", "socks5h", "socks"].includes(scheme)) {
+				return { ok: false, error: "схема " + scheme + " не поддерживается" };
+			}
+			if (!url.hostname) return { ok: false, error: "нужен адрес хоста" };
+			if (!url.port) return { ok: false, error: "нужен порт, например " + url.hostname + ":3128" };
+			return {
+				ok: true,
+				href: withScheme,
+				scheme,
+				host: url.hostname,
+				port: url.port,
+				auth: Boolean(url.username),
+				label: scheme + " · " + url.hostname + ":" + url.port + (url.username ? " · с логином" : " · без логина")
+			};
+		}
+
 		function ProxyPanel({ proxy, fallback, setProxy, setFallback, configured, busy, onPatch }) {
+			const [check, setCheck] = React.useState(null);
+			const parsed = readProxy(proxy);
+			const parsedFallback = fallback.trim() ? readProxy(fallback) : null;
+
+			const runCheck = async () => {
+				if (!parsed.ok) return;
+				setCheck({ state: "running" });
+				try {
+					const response = await fetch(EGRESS + "/check?proxy=" + encodeURIComponent(parsed.href), {
+						signal: AbortSignal.timeout(15000)
+					});
+					const result = await response.json();
+					setCheck(
+						result.ok
+							? { state: "ok", text: "туннель открылся за " + result.ms + " мс" }
+							: { state: "bad", text: result.error || "не отвечает" }
+					);
+				} catch (error) {
+					setCheck({ state: "bad", text: error.message || "проверка не удалась" });
+				}
+			};
+
 			const save = () => {
-				const patch = { mode: 'proxy' };
-				if (proxy.trim()) patch.proxy = proxy.trim();
-				if (fallback.trim()) patch.fallbackProxy = fallback.trim();
-				onPatch(patch, 'прокси сохранён');
+				if (!parsed.ok) return;
+				const patch = { mode: "proxy", proxy: parsed.href };
+				if (parsedFallback && parsedFallback.ok) patch.fallbackProxy = parsedFallback.href;
+				onPatch(patch, "прокси включён: " + parsed.label);
 			};
 
 			return h(
-				'div',
-				{ className: 'sub' },
-				h('div', { className: 'subhead' }, 'выход через прокси'),
-				h('input', {
-					className: 'input',
-					placeholder: 'http://host:port или socks5://host:port',
+				"div",
+				{ className: "sub" },
+				h("div", { className: "subhead" }, "выход через прокси"),
+				h("input", {
+					className: "input" + (proxy.trim() && !parsed.ok ? " bad" : ""),
+					placeholder: "http://логин:пароль@host:port, socks5://host:port или просто host:port",
 					value: proxy,
-					onChange: (event) => setProxy(event.target.value),
+					spellCheck: false,
+					onChange: (event) => {
+						setProxy(event.target.value);
+						setCheck(null);
+					},
 					onKeyDown: (event) => {
-						if (event.key === 'Enter') save();
+						if (event.key === "Enter" && parsed.ok) save();
 					}
 				}),
-				h('input', {
-					className: 'input',
-					placeholder: 'запасной прокси — необязательно',
-					value: fallback,
-					onChange: (event) => setFallback(event.target.value)
-				}),
 				h(
-					'div',
-					{ className: 'foot' },
-					h('button', { className: 'btn wide', disabled: busy || !proxy.trim(), onClick: save }, 'сохранить прокси'),
+					"div",
+					{ className: "parsed" + (proxy.trim() ? (parsed.ok ? " ok" : " bad") : "") },
+					proxy.trim() ? (parsed.ok ? "понял как: " + parsed.label : "не понял: " + parsed.error) : "вставь ссылку на прокси — схему можно не писать"
+				),
+				h("input", {
+					className: "input" + (parsedFallback && !parsedFallback.ok ? " bad" : ""),
+					placeholder: "запасной прокси — необязательно",
+					value: fallback,
+					spellCheck: false,
+					onChange: (event) => {
+						setFallback(event.target.value);
+						setCheck(null);
+					}
+				}),
+				check
+					? h(
+							"div",
+							{ className: "parsed " + (check.state === "ok" ? "ok" : check.state === "bad" ? "bad" : "") },
+							check.state === "running" ? "проверяю туннель…" : check.text
+						)
+					: null,
+				h(
+					"div",
+					{ className: "foot" },
+					h(
+						"button",
+						{ className: "btn", disabled: busy || !parsed.ok || check?.state === "running", onClick: runCheck },
+						"проверить"
+					),
+					h("button", { className: "btn wide", disabled: busy || !parsed.ok, onClick: save }, "сохранить и включить"),
 					configured
 						? h(
-								'button',
+								"button",
 								{
-									className: 'btn',
+									className: "btn",
 									disabled: busy,
-									onClick: () => onPatch({ proxy: '', fallbackProxy: '', mode: 'dns' }, 'прокси убран')
+									onClick: () => {
+										setProxy("");
+										setFallback("");
+										setCheck(null);
+										onPatch({ proxy: "", fallbackProxy: "", mode: "dns" }, "прокси убран");
+									}
 								},
-								'убрать'
+								"убрать"
 							)
 						: null
 				),
 				h(
-					'div',
-					{ className: 'hint' },
+					"div",
+					{ className: "hint" },
 					configured
-						? 'сохранённый адрес скрыт — пустое поле оставляет его как есть'
-						: 'адрес хранится в ~/.dsh/ag-egress.json, ключ проверяется при сохранении'
+						? "сохранённый адрес скрыт — пустое поле и сохранение оставят его как есть"
+						: "адрес пишется в ~/.dsh/ag-egress.json; ключ проверяется только при сохранении, «проверить» ничего не меняет"
 				)
 			);
 		}
 
 		function Transport({ egress, busy, note, onMode, onToggle, onPatch }) {
 			const state = egress.state;
-			const mode = (state && state.mode) || 'dns';
-			const info = (state && state.modeInfo) || { label: mode, detail: '', ready: false };
+			const mode = (state && state.mode) || "dns";
+			const info = (state && state.modeInfo) || { label: mode, detail: "", ready: false };
 			const config = (state && state.config) || {};
 			const providers = config.providers || {};
 			const chain = (state && state.chain) || [];
@@ -525,16 +612,30 @@ window.__ModuleLoader__.load({
 			const vpn = (state && state.vpn) || null;
 
 			const channels = ((state && state.channels) || []).filter(
-				(name) => name !== 'proxy' && name !== 'direct' && name !== 'custom'
+				(name) => name !== "proxy" && name !== "direct" && name !== "custom"
 			);
 
-			// Drafts are seeded once from the saved config: typing must not be overwritten by the
-			// five-second refresh of the same state.
-			const [dnsDraft, setDnsDraft] = React.useState('');
-			const [proxy, setProxy] = React.useState('');
-			const [fallback, setFallback] = React.useState('');
+			// The visible tab is local: picking Proxy must not try to switch the transport
+			// before an address exists, because that is a request the shim refuses — and a
+			// refusal in the note instead of a panel is why this looked broken.
+			const [tab, setTab] = React.useState(null);
 			React.useEffect(() => {
-				if (!dnsDraft && providers.custom && providers.custom.dns) setDnsDraft(providers.custom.dns.join(', '));
+				setTab((previous) => (previous === "proxy" && mode !== "proxy" ? previous : mode));
+			}, [mode]);
+			const pick = (next) => {
+				if (next === "proxy") {
+					setTab("proxy");
+					return;
+				}
+				setTab(next);
+				onMode(next);
+			};
+
+			const [dnsDraft, setDnsDraft] = React.useState("");
+			const [proxy, setProxy] = React.useState("");
+			const [fallback, setFallback] = React.useState("");
+			React.useEffect(() => {
+				if (!dnsDraft && providers.custom && providers.custom.dns) setDnsDraft(providers.custom.dns.join(", "));
 			}, [providers.custom]);
 			React.useEffect(() => {
 				// The shim answers with the proxy masked, and a masked value must never end up
@@ -546,30 +647,33 @@ window.__ModuleLoader__.load({
 				if (!fallback && config.fallbackProxy) setFallback(config.fallbackProxy);
 			}, [config.fallbackProxy]);
 
-			const dotColor = !egress.online ? 'var(--bad)' : info.ready ? 'var(--good)' : 'var(--warn)';
+			const pendingProxy = tab === "proxy" && mode !== "proxy";
+			const dotColor = !egress.online ? "var(--bad)" : info.ready ? "var(--good)" : "var(--warn)";
 			const detail = !egress.online
-				? 'egress shim is not running'
-				: mode === 'proxy'
-					? config.proxy || 'proxy url is not set'
-					: mode === 'vpn'
-						? vpn && vpn.connected
-							? (vpn.name || 'tunnel is up') + (vpn.kind ? ' · ' + vpn.kind : '')
-							: 'no VPN adapter is up'
-						: mode === 'direct'
-							? 'no relay — traffic leaves as is'
-							: chain.join(' › ');
+				? "egress shim is not running"
+				: pendingProxy
+					? "прокси не включён — впиши адрес и сохрани"
+					: mode === "proxy"
+						? config.proxy || "proxy url is not set"
+						: mode === "vpn"
+							? vpn && vpn.connected
+								? (vpn.name || "tunnel is up") + (vpn.kind ? " · " + vpn.kind : "")
+								: "no VPN adapter is up"
+							: mode === "direct"
+								? "no relay — traffic leaves as is"
+								: chain.join(" › ");
 
 			return h(
-				'div',
+				"div",
 				null,
-				h(Segmented, { value: mode, onChange: onMode }),
+				h(Segmented, { value: tab || mode, onChange: pick }),
 				h(
-					'div',
-					{ className: 'state' },
-					h('span', { className: 'dot', style: { background: dotColor, boxShadow: '0 0 8px ' + dotColor } }),
-					h('em', { key: detail }, detail)
+					"div",
+					{ className: "state" },
+					h("span", { className: "dot", style: { background: dotColor, boxShadow: "0 0 8px " + dotColor } }),
+					h("em", { key: detail }, detail)
 				),
-				mode === 'dns'
+				(tab || mode) === "dns"
 					? h(DnsPanel, {
 							channels,
 							active: config.route,
@@ -581,7 +685,7 @@ window.__ModuleLoader__.load({
 							onPatch
 						})
 					: null,
-				mode === 'proxy'
+				(tab || mode) === "proxy"
 					? h(ProxyPanel, {
 							proxy,
 							fallback,
@@ -593,27 +697,27 @@ window.__ModuleLoader__.load({
 						})
 					: null,
 				h(
-					'div',
-					{ className: 'relay' },
+					"div",
+					{ className: "relay" },
 					h(
-						'div',
-						{ className: 'txt' },
-						h('b', null, 'Relay'),
-						h('span', null, info.label + ' · ' + (stats ? stats.proxied + ' ok · ' + stats.failed + ' fail' : 'no stats'))
+						"div",
+						{ className: "txt" },
+						h("b", null, "Relay"),
+						h("span", null, info.label + " · " + (stats ? stats.proxied + " ok · " + stats.failed + " fail" : "no stats"))
 					),
 					h(
-						'button',
+						"button",
 						{
-							className: 'switch' + (mode === 'direct' ? '' : ' on'),
-							role: 'switch',
-							'aria-checked': mode !== 'direct',
-							'aria-label': 'relay',
+							className: "switch" + (mode === "direct" ? "" : " on"),
+							role: "switch",
+							"aria-checked": mode !== "direct",
+							"aria-label": "relay",
 							onClick: onToggle
 						},
-						h('i')
+						h("i")
 					)
 				),
-				note ? h('div', { className: 'note' }, note) : null
+				note ? h("div", { className: "note" }, note) : null
 			);
 		}
 

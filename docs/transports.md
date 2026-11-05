@@ -71,7 +71,7 @@ it edits the parts of the mode that need a value.
 | Mode | What the panel shows | What a change writes |
 | --- | --- | --- |
 | DNS | one chip per channel plus `our chain`, and a field for your own resolver | `{mode:"dns", route}` or `{providers:{custom:{dns:[…]}}, route:"custom"}` |
-| Proxy | proxy URL, fallback URL, remove | `{proxy, fallbackProxy, mode:"proxy"}` |
+| Proxy | address, fallback, check, remove | `{proxy, fallbackProxy, mode:"proxy"}` |
 | VPN | whether a tunnel is up, and its name | `{mode:"vpn"}` |
 | Direct | nothing to configure | `{mode:"direct"}` |
 
@@ -83,6 +83,30 @@ The proxy field is never prefilled with a masked value. `GET /` masks credential
 (`socks5://***:***@host:port`), and writing that string back would replace a working address
 with bullets — so the field starts empty, and an empty field on save means "keep the saved
 one".
+
+### Proxy addresses
+
+The field takes what a proxy seller gives you, and normalises it before saving:
+
+| You paste | It becomes |
+| --- | --- |
+| `host:3128` | `http://host:3128` |
+| `http://user:pass@host:3128` | kept as is |
+| `socks5://host:1080` | kept as is |
+| `socks5h://host:1080` | remote DNS, kept as is |
+| `ftp://host:21` | refused — a scheme that is not a proxy scheme is not guessed |
+
+Under the field the panel says what it understood (`http · host:3128 · с логином`), so a
+typo shows up before saving rather than as a failed request later.
+
+`проверить` opens a tunnel through the candidate to the same host the bridge uses, without
+saving anything, and reports the milliseconds it took or the reason it failed
+(`GET /check?proxy=…`). Saving is a separate click, and saving the same address a second time
+is harmless.
+
+Clicking the `Proxy` tab never switches the transport on its own: it reveals the panel and
+waits. Switching to `proxy` with no address is refused by the shim, so doing it on a tab click
+would only produce an error under a panel that has nowhere to type the address yet.
 
 ### Subscribing instead of polling
 
