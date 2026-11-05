@@ -16,8 +16,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const variant = (process.argv[2] || 'dns').toLowerCase();
-if (!['dns', 'proxy'].includes(variant)) {
-  console.error('usage: node preview/build-preview.mjs dns|proxy');
+if (!['dns', 'proxy', 'pill'].includes(variant)) {
+  console.error('usage: node preview/build-preview.mjs dns|proxy|pill');
   process.exit(1);
 }
 
@@ -35,14 +35,15 @@ const styles = stylesheet[1];
 
 const tone = (pct) => (pct > 50 ? 'var(--good)' : pct > 20 ? 'var(--warn)' : 'var(--bad)');
 
-function ring(pct, size = 46, bare = false) {
-  const radius = size / 2 - 4.5;
+function ring(pct, size = 46, bare = false, thin = false) {
+  const stroke = thin ? 2 : 3;
+  const radius = size / 2 - stroke / 2 - 1.5;
   const center = size / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (pct / 100) * circumference;
   return `<div class="ring" style="width:${size}px;height:${size}px"><svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="3"/>
-    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${tone(pct)}" stroke-width="3" stroke-linecap="round"
+    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="${stroke}"/>
+    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${tone(pct)}" stroke-width="${stroke}" stroke-linecap="round"
       stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"/>
   </svg>${bare ? '' : `<b>${pct}%</b>`}</div>`;
 }
@@ -72,6 +73,11 @@ function account({ email, tier, groups, models, pinned }) {
       .join('')}</div>
   </div>`;
 }
+
+const pillMarkup = (pct, tone) =>
+  '<div class="agq"><div class="pill">' + ring(pct, 26, true, true) +
+  '<span><b>' + pct + '%</b><span class="cap"><i class="st" style="background:' + tone +
+  ';color:' + tone + '"></i>Gemini bridge</span></span></div></div>';
 
 const chain = 'bezmezhau › geohideeu › geohide › magicdns › direct';
 const channels = ['bezmezhau', 'geohideeu', 'geohide', 'magicdns'];
@@ -105,6 +111,24 @@ const stateLine =
   variant === 'dns'
     ? `<em>${chain}</em>`
     : `<em>режим dns — прокси включится после сохранения</em>`;
+
+if (variant === 'pill') {
+  const page = [
+    '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>pill</title><style>',
+    'html,body{margin:0;background:radial-gradient(80% 70% at 70% 10%,#1a1a29,transparent 60%),#0a0a11}',
+    'body{padding:14px;display:inline-block}',
+    styles,
+    '.agq *{animation:none !important;transition:none !important;opacity:1 !important}',
+    '.row{display:flex;gap:10px;align-items:center}',
+    '</style></head><body><div class="row">',
+    pillMarkup(100, "var(--good)") + pillMarkup(71, "var(--good)") + pillMarkup(12, "var(--warn)"),
+    '</div></body></html>'
+  ].join("\n");
+  const out = path.join(here, 'preview-pill.html');
+  fs.writeFileSync(out, page);
+  console.log('written:', out);
+  process.exit(0);
+}
 
 const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>

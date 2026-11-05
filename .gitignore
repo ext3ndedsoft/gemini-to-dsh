@@ -43,3 +43,4 @@ Thumbs.db
 # committed under assets/ are made from these, so the HTML itself stays out.
 preview/preview*.html
 preview/banner*.png
+preview/_*.png

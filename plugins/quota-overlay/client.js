@@ -33,15 +33,17 @@ window.__ModuleLoader__.load({
 	.agq *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
 }
 .agq button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
-.agq .pill{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 9px;border-radius:999px;
+.agq .pill{display:flex;align-items:center;gap:7px;padding:4px 9px 4px 5px;border-radius:999px;
 	background:linear-gradient(180deg,rgba(30,30,42,.96),rgba(16,16,22,.96));
 	border:1px solid var(--line-strong);box-shadow:0 10px 30px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);
 	transition:transform .16s ease,box-shadow .16s ease}
 .agq .pill:hover{transform:translateY(-1px);box-shadow:0 14px 36px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.09)}
 .agq .pill:active{transform:scale(.97)}
 .agq .pill{transition:transform .16s ease,box-shadow .16s ease}
-.agq .pill b{display:block;font-size:12px;font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;line-height:1.15}
-.agq .pill span.sub{display:block;font-size:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.agq .pill{gap:8px;padding:5px 11px 5px 5px}
+.agq .pill b{display:block;font-size:15px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1}
+.agq .pill .cap{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--muted);letter-spacing:.01em;line-height:1;margin-top:3px;white-space:nowrap}
+.agq .pill .st{width:4px;height:4px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 6px currentColor}
 .agq .panel{display:flex;overflow:hidden;animation:agq-panel-in .24s cubic-bezier(.2,.9,.25,1) both;transform-origin:bottom right}
 .agq .panel.closing{animation:agq-panel-out .16s ease-in forwards}
 .agq .panel{width:348px;max-width:calc(100vw - 28px);max-height:min(74vh,640px);
@@ -306,9 +308,10 @@ window.__ModuleLoader__.load({
 
 		/* ---------------------------------------------------------------- atoms */
 
-		function Ring({ pct, size = 46, bare = false }) {
+		function Ring({ pct, size = 46, bare = false, thin = false }) {
 			const box = size;
-			const radius = box / 2 - 4.5;
+			const stroke = thin ? 2 : 3;
+			const radius = box / 2 - stroke / 2 - 1.5;
 			const center = box / 2;
 			const circumference = 2 * Math.PI * radius;
 			const filled = (clamp(pct) / 100) * circumference;
@@ -319,14 +322,14 @@ window.__ModuleLoader__.load({
 				h(
 					"svg",
 					{ width: box, height: box, viewBox: "0 0 " + box + " " + box },
-					h("circle", { cx: center, cy: center, r: radius, fill: "none", stroke: "rgba(255,255,255,.09)", strokeWidth: 3 }),
+					h("circle", { cx: center, cy: center, r: radius, fill: "none", stroke: "rgba(255,255,255,.09)", strokeWidth: stroke }),
 					h("circle", {
 						cx: center,
 						cy: center,
 						r: radius,
 						fill: "none",
 						stroke: color,
-						strokeWidth: 3,
+						strokeWidth: stroke,
 						strokeLinecap: "round",
 						strokeDasharray: circumference,
 						strokeDashoffset: circumference - filled,
@@ -923,36 +926,9 @@ window.__ModuleLoader__.load({
 				} catch {}
 			};
 
-			// The relay plugin puts its own link in the same corner (fixed, right:16, bottom:16,
-			// huge z-index) and it lands straight on top of this widget. Publishing our width
-			// lets the rule below keep that link to the left of us, at any size, without
-			// touching the other plugin.
-			const rootRef = React.useRef(null);
-			React.useEffect(() => {
-				const style = document.createElement("style");
-				style.id = "agq-relay-offset";
-				style.textContent =
-					"#dsh-relay-link{right:calc(16px + var(--agq-w, 132px) + 10px) !important}";
-				document.head.appendChild(style);
-				const node = rootRef.current;
-				const push = () => {
-					if (!node) return;
-					document.documentElement.style.setProperty("--agq-w", Math.round(node.offsetWidth) + "px");
-				};
-				push();
-				const observer = typeof ResizeObserver === "function" ? new ResizeObserver(push) : null;
-				if (observer && node) observer.observe(node);
-				window.addEventListener("resize", push);
-				return () => {
-					observer?.disconnect();
-					window.removeEventListener("resize", push);
-					style.remove();
-				};
-			}, []);
-
 			return h(
 				"div",
-				{ ref: rootRef, className: "agq", style: { position: "fixed", right: 14, bottom: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end" } },
+				{ className: "agq", style: { position: "fixed", right: 14, bottom: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end" } },
 				open
 					? h(
 							"div",
@@ -1033,12 +1009,25 @@ h(Transport, {
 				h(
 					"div",
 					{ className: "pill", onClick: toggle, title: error ? error : "Antigravity quota" },
-					h(Ring, { pct: weekly ? pctOf(weekly.remaining) : worst ?? 0, size: 34, bare: true }),
+					// Collapsed is one glance: how much is left, and whether the bridge is there. The
+					// ring carries the same number, the caption carries the state.
+					h(Ring, { pct: weekly ? pctOf(weekly.remaining) : worst ?? 0, size: 26, bare: true, thin: true }),
 					h(
 						"span",
 						null,
-						h("b", null, error ? "offline" : weekly ? pctOf(weekly.remaining) + "%" : worst === null ? "—" : worst + "%"),
-						h("span", { className: "sub" }, error ? "no bridge" : weekly ? "weekly" : "5h")
+						h("b", null, error ? "off" : weekly ? pctOf(weekly.remaining) + "%" : worst === null ? "—" : worst + "%"),
+						h(
+							"span",
+							{ className: "cap" },
+							h("i", {
+								className: "st",
+								style: {
+									background: error ? "var(--bad)" : weekly ? "var(--good)" : "var(--warn)",
+									color: error ? "var(--bad)" : weekly ? "var(--good)" : "var(--warn)"
+								}
+							}),
+							"Gemini bridge"
+						)
 					)
 				)
 			);
