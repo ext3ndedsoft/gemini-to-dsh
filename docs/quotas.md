@@ -94,6 +94,27 @@ Two limits worth knowing: a probe waits up to `AG_PROBE_TIMEOUT_MS` (30 s) and t
 (default 180 000) refreshes the five-hour numbers in the background, so ordering still
 honours the 5% rule when no panel is open.
 
+### Turning the guard off
+
+The five-hour rule is an opinion about somebody else's accounting — and it is the one piece of
+routing that can stand between you and a working account. So it is a setting, not a law:
+
+```bash
+curl -s localhost:8787/accounts/rotation -H 'authorization: Bearer local-bridge' \
+  -H 'content-type: application/json' -d '{"enabled":false}'
+# {"ok":true,"rotation":{"enabled":false,"threshold":0.05}}
+```
+
+The same switch is in the panel, above the account list: `сторож 5h` with a threshold field in
+percent. With the guard **off**, accounts are still ordered by their five-hour reading and the
+pin always wins — nothing gets demoted for being low. With it **on**, the pinned account stops
+being promoted once its five-hour window is at or below the threshold, and the request goes to
+whoever has more room.
+
+That is the whole point of the switch: if Google's numbers look wrong for your accounts, turn
+the guard off and keep the pin. State lives in `~/.dsh/profiles/web/plugins/ag-limits/accounts.json`
+under `rotation`, so it survives restarts and needs no environment variable.
+
 ## In the response
 
 `/limits` keeps its shape and adds one field per account:

@@ -125,6 +125,15 @@ window.__ModuleLoader__.load({
 	animation:agq-rise .3s cubic-bezier(.2,.9,.25,1) both;transition:border-color .18s,transform .18s,box-shadow .18s}
 .agq .card:hover{border-color:rgba(255,255,255,.16);transform:translateY(-1px);
 	box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.agq .guard{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 11px;border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.025);transition:opacity .18s}
+.agq .guard.off{opacity:.62}
+.agq .guard .txt{flex:1;min-width:0}
+.agq .guard .txt b{display:block;font-size:11.5px;font-weight:600}
+.agq .guard .txt span{display:block;font-size:9.5px;color:var(--muted);margin-top:2px;line-height:1.25}
+.agq .guard .num{display:flex;align-items:center;gap:2px;font-size:10px;color:var(--muted)}
+.agq .guard .num input{width:26px;padding:3px 0;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--fg);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;outline:none}
+.agq .guard .num input:focus{border-color:rgba(124,156,255,.5)}
+.agq .guard .num input:disabled{opacity:.45}
 .agq .card .lat{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--muted)}
 .agq .card .lat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
 .agq .card .lat b.none{color:var(--muted);font-weight:500}
@@ -1062,6 +1071,39 @@ window.__ModuleLoader__.load({
 				load(true);
 			};
 
+			// The guard is a judgement about Google's accounting, so it has an off switch
+			// and a threshold the person can move.
+			const rotation = (data && data.rotation) || { enabled: true, threshold: 0.05 };
+			const [thresholdText, setThresholdText] = React.useState(null);
+			const [guardBusy, setGuardBusy] = React.useState(false);
+			const saveRotation = async (patch) => {
+				setGuardBusy(true);
+				try {
+					const res = await fetch(BRIDGE + "/accounts/rotation", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(patch)
+					});
+					const json = await res.json().catch(() => ({}));
+					if (json && json.ok) setNote(json.rotation.enabled ? "сторож включён" : "сторож выключен");
+					else setNote("мост не принял настройку");
+				} catch {
+					setNote("мост не отвечает");
+				}
+				setThresholdText(null);
+				setGuardBusy(false);
+				load(true);
+			};
+			const commitThreshold = () => {
+				if (thresholdText === null) return;
+				const pct = Number(thresholdText.replace(",", "."));
+				if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+					setThresholdText(null);
+					return;
+				}
+				saveRotation({ threshold: pct / 100 });
+			};
+
 			const [checking, setChecking] = React.useState(null);
 			const checkAccount = async (id) => {
 				setChecking(id);
@@ -1145,6 +1187,51 @@ h(Transport, {
 									onToggle: toggleRelay,
 									onPatch: patch
 								}),
+								h(
+									"div",
+									{ className: "guard" + (rotation.enabled ? "" : " off") },
+									h(
+										"div",
+										{ className: "txt" },
+										h("b", null, "сторож 5h"),
+										h(
+											"span",
+											null,
+											rotation.enabled
+												? "уводить запросы на другой аккаунт, когда пятичасовое ниже порога"
+												: "выключен — аккаунты идут по порядку, пин всегда первый"
+										)
+									),
+									h(
+										"label",
+										{ className: "num", title: "порог пятичасового окна, %" },
+										h(
+											"input",
+											{
+												type: "text",
+												inputMode: "numeric",
+												value: thresholdText !== null ? thresholdText : String(Math.round(rotation.threshold * 100)),
+												onChange: (event) => setThresholdText(event.target.value.replace(/[^0-9.,]/g, "")),
+												onBlur: commitThreshold,
+												onKeyDown: (event) => {
+													if (event.key === "Enter") event.currentTarget.blur();
+												},
+												disabled: !rotation.enabled || guardBusy
+											}
+										),
+										h("span", null, "%")
+									),
+									h(
+										"button",
+										{
+											className: "switch" + (rotation.enabled ? " on" : ""),
+											onClick: () => saveRotation({ enabled: !rotation.enabled }),
+											disabled: guardBusy,
+											title: rotation.enabled ? "выключить сторожа" : "включить сторожа"
+										},
+										h("i")
+									)
+								),
 								h("div", { className: "sect" }, "accounts"),
 								accounts.length
 									? accounts.map((account, index) =>

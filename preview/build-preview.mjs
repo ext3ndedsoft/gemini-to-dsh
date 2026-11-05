@@ -168,6 +168,11 @@ ${styles}
         <div class="txt"><b>Relay</b><span>${variant === 'dns' ? 'DNS' : 'Proxy'} · 132 ok · 0 fail</span></div>
         <button class="switch on"><i></i></button>
       </div>
+      <div class="guard">
+        <div class="txt"><b>сторож 5h</b><span>уводить запросы на другой аккаунт, когда пятичасовое ниже порога</span></div>
+        <label class="num"><input value="5" readonly>%</label>
+        <button class="switch on"><i></i></button>
+      </div>
       <div class="sect">accounts</div>
       ${account({
         email: 'someone@example.com',

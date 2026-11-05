@@ -35,7 +35,9 @@ import {
   recordLatency,
   removeAccount,
   setEnabled,
+  rotationOf,
   setPinned,
+  setRotation,
   startLogin,
   warmQuotaSummaries,
 } from './accounts.js';
@@ -194,7 +196,7 @@ async function handleAccountRoutes(req, res, url) {
       return sendJson(res, 200, await limitsReport({ force: url.searchParams.get('force') === '1' }));
     }
     if (req.method === 'GET' && url.pathname === '/accounts') {
-      return sendJson(res, 200, { accounts: listAccounts(), pinned: loadStore().pinned });
+      return sendJson(res, 200, { accounts: listAccounts(), pinned: loadStore().pinned, rotation: rotationOf(loadStore()) });
     }
     if (req.method === 'POST' && url.pathname === '/accounts/login') {
       return sendJson(res, 200, startLogin());
@@ -217,6 +219,10 @@ async function handleAccountRoutes(req, res, url) {
     if (req.method === 'POST' && url.pathname === '/accounts/check') {
       const body = await jsonBody(req).catch(() => ({}));
       return sendJson(res, 200, await probeAccount(body.id));
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/rotation') {
+      const body = await jsonBody(req).catch(() => ({}));
+      return sendJson(res, 200, { ok: true, rotation: setRotation(body) });
     }
     if (req.method === 'POST' && url.pathname === '/accounts/enabled') {
       const body = await jsonBody(req).catch(() => ({}));

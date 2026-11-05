@@ -411,12 +411,13 @@ export function orderedAccounts(model) {
   const waiting = scored.filter((s) => s.cooling).sort((a, b) => a.until - b.until);
   const ordered = [...live, ...waiting].map((s) => s.acc);
   const pinned = current.pinned;
+  const rotation = rotationOf(current);
   if (pinned) {
     const index = ordered.findIndex((acc) => acc.id === pinned);
     const mine = scored.find((s) => s.acc.id === pinned);
     // The pin means "prefer this one", not "burn this one to zero while another
-    // account sits above 5%". Below the floor the order stands as scored.
-    const floor = mine && mine.fiveHour !== null && mine.fiveHour <= EXHAUSTED_AT;
+    // account sits above the floor". With the guard off, the pin simply wins.
+    const floor = rotation.enabled && mine && mine.fiveHour !== null && mine.fiveHour <= rotation.threshold;
     if (index > 0 && !floor) ordered.unshift(...ordered.splice(index, 1));
     else if (index > 0) log(`accounts: ${pinned} is at ${Math.round(mine.fiveHour * 100)}% of its 5h window, not promoting it`);
   }
@@ -563,6 +564,7 @@ export async function limitsReport({ force = false } = {}) {
   return {
     accounts,
     pinned: current.pinned,
+    rotation: rotationOf(current),
     cooldowns: cooldownSnapshot(),
     updatedAt: Date.now(),
   };
@@ -578,6 +580,36 @@ export function removeAccount(id) {
   modelsCache.delete(id);
   saveStore();
   return true;
+}
+
+const ROTATION_DEFAULTS = { enabled: true, threshold: EXHAUSTED_AT };
+
+/**
+ * The five-hour guard is a guess about somebody else's accounting, and it is
+ * the one piece of routing that can stand between a person and a working
+ * account. So it is a setting with an off switch, not a law.
+ */
+export function rotationOf(current = loadStore()) {
+  const raw = current && current.rotation ? current.rotation : {};
+  const threshold = Number(raw.threshold);
+  return {
+    enabled: raw.enabled !== false,
+    threshold: Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : ROTATION_DEFAULTS.threshold,
+  };
+}
+
+export function setRotation(patch = {}) {
+  const current = loadStore();
+  const now = rotationOf(current);
+  const next = {
+    enabled: patch.enabled === undefined ? now.enabled : Boolean(patch.enabled),
+    threshold: patch.threshold === undefined ? now.threshold : Math.min(1, Math.max(0, Number(patch.threshold))),
+  };
+  if (!Number.isFinite(next.threshold)) next.threshold = now.threshold;
+  current.rotation = next;
+  saveStore();
+  log(`rotation: guard ${next.enabled ? 'on' : 'off'}, threshold ${Math.round(next.threshold * 100)}%`);
+  return next;
 }
 
 export function setPinned(id) {
