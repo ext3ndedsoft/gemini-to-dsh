@@ -98,6 +98,10 @@ under the existing `- insert:` list (create the list if it is not there yet):
 If the file already has an `- insert:` block, just add the two lines below it — YAML does not
 like two `insert` keys in the same list item.
 
+A ready-made copy of that snippet lives in
+[`plugins/quota-overlay/cordis.patch.example.yml`](../plugins/quota-overlay/cordis.patch.example.yml) —
+copy the block instead of retyping it.
+
 Restart the DSH shell. The panel appears as a small pill in the bottom-right corner; click it to
 open.
 

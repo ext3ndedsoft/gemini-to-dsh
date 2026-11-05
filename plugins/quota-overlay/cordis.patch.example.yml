@@ -1,0 +1,17 @@
+# Example profile patch for the quota panel.
+#
+# Copy the `- insert:` block into ~/.dsh/profiles/web/cordis.patch.yml.
+# If that file already has an `- insert:` list, add the two plugin lines to it
+# instead of pasting a second `insert` key — YAML keeps only one per mapping.
+#
+# `name` is resolved relative to the profile folder, so the plugin has to live in
+# ~/.dsh/profiles/web/plugins/quota-overlay/ for this path to work.
+
+- insert:
+    - id: quota-overlay
+      name: "./plugins/quota-overlay/index.js"
+      config:
+        bridgeUrl: "http://127.0.0.1:8787"
+        egressUrl: "http://127.0.0.1:8789"
+        # Must match AG_BRIDGE_SECRET on the bridge. Change both together.
+        bridgeSecret: "local-bridge"
