@@ -751,6 +751,22 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// The bridge and the platform below it speak in exceptions: "The operation was aborted
+		// due to timeout" is true and useless in a card. Known failures get a sentence a person
+		// can act on; anything unrecognised is still shown, just without the stack-speak.
+		function explainError(text) {
+			const raw = String(text || "").trim();
+			if (!raw) return "";
+			if (/aborted due to timeout|operation was aborted/i.test(raw)) return "не ответил вовремя — попробую снова";
+			if (/ECONNRESET|socket hang up|other side closed/i.test(raw)) return "соединение оборвалось";
+			if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(raw)) return "не нашёл адрес — проверь сеть";
+			if (/ECONNREFUSED|127\.0\.0\.1|localhost/i.test(raw)) return "мост не отвечает";
+			if (/\b401\b|unauthorized|invalid_grant/i.test(raw)) return "нужно войти заново";
+			if (/\b429\b|rate limit|resource_exhausted/i.test(raw)) return "квота исчерпана, жду сброса";
+			if (/\b403\b|permission|forbidden/i.test(raw)) return "доступ закрыт для этого аккаунта";
+			return raw.length > 90 ? raw.slice(0, 87) + "…" : raw;
+		}
+
 		function AccountCard({ account, pinned, onPin, index = 0 }) {
 			const groups = account.groups || [];
 			const models = Object.entries(account.models || {})
@@ -776,7 +792,7 @@ window.__ModuleLoader__.load({
 						: h("button", { className: "mini", onClick: () => onPin(account.id), title: "serve this account first" }, "pin")
 				),
 				!account.ok
-					? h("div", { className: "err" }, account.error || "unavailable")
+					? h("div", { className: "err" }, explainError(account.error) || "недоступен")
 					: groups.length
 						? h("div", null, groups.map((group, index) => h(GroupRow, { key: group.name + index, group })))
 						: h("div", { className: "empty" }, "weekly quota unavailable"),
