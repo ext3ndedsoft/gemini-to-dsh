@@ -33,7 +33,7 @@ async function test(name, fn) {
 }
 
 const { thinkingConfig } = await import('../lib/schema.js');
-const { withHeaderTimeout } = await import('../accounts.js');
+const { withHeaderTimeout, rankScore } = await import('../accounts.js');
 const { resetHint } = await import('../lib/http.js');
 
 function listen(server) {
@@ -135,6 +135,22 @@ await test('rotation settings survive a reload', () => {
   assert.deepEqual(result.memory, { enabled: false, threshold: 0.2 });
   assert.deepEqual(result.disk, { enabled: false, threshold: 0.2 });
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+console.log('\naccount ranking');
+
+await test('a fast account outranks a slow one with more quota', () => {
+  const slowFull = rankScore(1, 20_000);
+  const fastLower = rankScore(0.64, 3_000);
+  assert.ok(fastLower > slowFull, `${fastLower} vs ${slowFull}`);
+});
+
+await test('unknown latency is never penalised', () => {
+  assert.equal(rankScore(0.8, null), 0.8);
+});
+
+await test('a hang cannot sink an account further than the cap', () => {
+  assert.equal(rankScore(1, 10 * 60_000), 0.25);
 });
 
 console.log('\nthinking window');

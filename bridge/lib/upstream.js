@@ -12,6 +12,7 @@ import { noteRequest,
   networkReason,
   orderedAccounts,
   primaryAccount,
+  recordLatency,
 } from '../accounts.js';
 import { DEFAULT_PROJECT, log, resolveModel } from './config.js';
 import { resetHint } from './http.js';
@@ -98,7 +99,11 @@ export async function upstream(body, signal) {
     try {
       res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, { signal });
     } catch (err) {
-      log(`account ${account.id} threw for ${model}: ${networkReason(err)}`);
+      // The failure is a measurement too: an account that hangs for the whole
+      // header budget has earned its latency reading, or the ranking keeps putting
+      // it first and the person keeps waiting 20 s before the failover.
+      recordLatency(account, Date.now() - startedAt);
+      log(`account ${account.id} threw for ${model} after ${Date.now() - startedAt}ms: ${networkReason(err)}`);
       markCooling(account, model, Date.now() + 300_000);
       if (index === candidates.length - 1) throw err;
       continue;

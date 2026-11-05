@@ -437,8 +437,28 @@ function cooldownFor(acc, model) {
 }
 
 /**
+ * Ranking value for one account: remaining headroom minus what its latency costs
+ * in perceived quality. A 20 s stall is worse than a tank that is half empty — the
+ * person waits either way, and the fast account should win while it still has
+ * quota. Unknown latency costs nothing, so a fresh account gets tried.
+ */
+export function rankScore(fraction, latencyMs) {
+  const penalty = Number.isFinite(latencyMs) ? Math.min(0.75, latencyMs / 40_000) : 0;
+  return fraction - penalty;
+}
+
+/** Last measured first-token latency, ignored when it is older than half an hour. */
+function freshLatency(id, now) {
+  const seen = latencies.get(id);
+  if (!seen || !Number.isFinite(seen.ms)) return null;
+  if (now - (seen.at || 0) > 30 * 60_000) return null;
+  return seen.ms;
+}
+
+/**
  * Accounts ranked for one model: not cooling first, then by remaining quota
- * headroom, with the operator's pinned account promoted to the front.
+ * headroom adjusted for speed, with the operator's pinned account promoted to the
+ * front.
  */
 export function orderedAccounts(model) {
   const current = loadStore();
@@ -456,9 +476,10 @@ export function orderedAccounts(model) {
       // session. The per-model number still decides between accounts whose
       // five-hour reading is identical, and stands in when none was fetched.
       const fraction = fiveHour !== null ? fiveHour : modelFraction !== null ? modelFraction : 0.5;
-      return { acc, until, cooling: until > now, fraction, fiveHour };
+      const latency = freshLatency(acc.id, now);
+      return { acc, until, cooling: until > now, fraction, fiveHour, latency, score: rankScore(fraction, latency) };
     });
-  const live = scored.filter((s) => !s.cooling).sort((a, b) => b.fraction - a.fraction);
+  const live = scored.filter((s) => !s.cooling).sort((a, b) => b.score - a.score);
   const waiting = scored.filter((s) => s.cooling).sort((a, b) => a.until - b.until);
   const ordered = [...live, ...waiting].map((s) => s.acc);
   const pinned = current.pinned;
