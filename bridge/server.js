@@ -393,7 +393,7 @@ const server = http.createServer(async (req, res) => {
         const messageChars = JSON.stringify(body.messages).length;
         log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
       } else {
-        log(`turn: model=${body.model} tools=${body.tools?.length || 0} messages=${body.messages.length} stream=${body.stream ? 'yes' : 'no'}`);
+        log(`turn: model=${body.model} tools=${body.tools?.length || 0} messages=${body.messages.length} max=${body.max_tokens ?? 'auto'} stream=${body.stream ? 'yes' : 'no'}`);
       }
       // Asking any model for a picture lands on the image model: words, not a command.
       const imageRoute = routeFor(body);

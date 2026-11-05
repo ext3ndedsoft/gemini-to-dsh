@@ -167,10 +167,13 @@ export function thinkingConfig(effort, maxTokens, mode) {
   if (mode === 'minimal') return { thinkingBudget: THINKING_BUDGETS.minimal, includeThoughts: false };
 
   const cap = typeof maxTokens === 'number' ? maxTokens : 32768;
-  // Thinking and the answer share one window: a 32-token probe with a 256-token
-  // thought comes back empty, so a tiny window gets no thinking at all.
-  if (cap < 1024) return { thinkingBudget: 0, includeThoughts: true };
-  const room = Math.max(256, cap - 1024);
+  // A window this small only ever comes from a liveness probe: any thought at all
+  // would eat it whole and the call would come back empty.
+  if (cap <= 128) return { thinkingBudget: 0, includeThoughts: true };
+  // Thinking and the answer share one window. On a small window leave the model at
+  // least half of it to answer with instead of turning the thought off outright —
+  // a silently thought-less turn reads as a dumber model, not as a smaller request.
+  const room = cap > 1024 ? cap - 1024 : Math.max(128, Math.floor(cap / 2));
   const key = String(effort || '').toLowerCase();
   const budget = Math.min(THINKING_BUDGETS[key] || THINKING_BUDGETS.medium, room);
   if (budget < THINKING_BUDGETS.minimal) return { includeThoughts: true };

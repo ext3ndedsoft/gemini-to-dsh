@@ -120,6 +120,10 @@ await test('a tiny output window gets no thinking budget', () => {
   assert.equal(thinkingConfig('high', 32).thinkingBudget, 0);
 });
 
+await test('a small but real window still thinks, on half the window', () => {
+  assert.equal(thinkingConfig('high', 256).thinkingBudget, 128);
+});
+
 await test('a normal window keeps the configured budget', () => {
   assert.ok(thinkingConfig('high', 32768).thinkingBudget >= 1024);
 });

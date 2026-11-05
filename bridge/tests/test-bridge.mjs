@@ -170,8 +170,20 @@ test('high effort leaves room for the answer', () => {
   assert.equal(thinkingConfig('high', 4096).thinkingBudget, 3072);
 });
 
-test('a tiny max_tokens never lets thinking eat the window', () => {
-  assert.equal(thinkingConfig('high', 1024).thinkingBudget, 256);
+test('thinking never eats the whole answer window', () => {
+  // A liveness probe is the one case with no room for a thought at all.
+  assert.equal(thinkingConfig('high', 32).thinkingBudget, 0);
+  assert.equal(thinkingConfig('high', 128).thinkingBudget, 0);
+  // A small but real window keeps at least half for the answer.
+  for (const cap of [256, 512, 1024]) {
+    const budget = thinkingConfig('high', cap).thinkingBudget;
+    assert.ok(budget > 0 && budget <= cap / 2, `budget ${budget} in a ${cap}-token window`);
+  }
+  // A large window reserves the answer's kilobyte instead.
+  for (const cap of [2048, 8192, 32768]) {
+    const budget = thinkingConfig('high', cap).thinkingBudget;
+    assert.ok(cap - budget >= 1024, `budget ${budget} leaves ${cap - budget} for a ${cap}-token answer`);
+  }
 });
 
 test('forced modes turn thoughts off for a retry', () => {
