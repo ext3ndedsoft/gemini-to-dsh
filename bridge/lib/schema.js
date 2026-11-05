@@ -174,7 +174,10 @@ export function thinkingConfig(effort, maxTokens, mode) {
   // least half of it to answer with instead of turning the thought off outright —
   // a silently thought-less turn reads as a dumber model, not as a smaller request.
   const room = cap > 1024 ? cap - 1024 : Math.max(128, Math.floor(cap / 2));
-  const key = String(effort || '').toLowerCase();
+  // An explicit effort from the client wins; otherwise the operator can lower the
+  // default for cost without touching the client. Thinking is billed as output, and
+  // on a big context it is most of the bill.
+  const key = String(effort || process.env.AG_THINKING_DEFAULT || '').toLowerCase();
   const budget = Math.min(THINKING_BUDGETS[key] || THINKING_BUDGETS.medium, room);
   if (budget < THINKING_BUDGETS.minimal) return { includeThoughts: true };
   return { thinkingBudget: budget, includeThoughts: true };

@@ -117,12 +117,19 @@ export async function upstream(body, signal) {
     }
     last = res;
     const rotate = res.status === 429 || res.status === 401 || res.status === 403;
-    if (!rotate || index === candidates.length - 1) return res;
-
-    const text = await res.text().catch(() => '');
-    const until = resetHint(text) || Date.now() + 120_000;
-    markCooling(account, model, until);
-    log(`rotating past account ${account.id} for ${model}: upstream ${res.status}`);
+    if (rotate) {
+      // Record the wall even when there is nobody left to rotate to: this account
+      // just said it cannot serve this model, and that fact is what stops the next
+      // turn from walking into the same 429. A copy is read so the caller still
+      // gets the original body to build its own message from.
+      const text = await res.clone().text().catch(() => '');
+      markCooling(account, model, resetHint(text) || Date.now() + 120_000);
+      if (index < candidates.length - 1) {
+        log(`rotating past account ${account.id} for ${model}: upstream ${res.status}`);
+        continue;
+      }
+    }
+    return res;
   }
   return last;
 }

@@ -505,6 +505,24 @@ export function primaryAccount() {
   return orderedAccounts('*')[0] || current.accounts[0] || null;
 }
 
+/**
+ * What the bridge itself has been told: this account is spent for these models
+ * until that moment. The quota endpoints can report a healthy percentage while a
+ * request is refused ("individual quota reached, resets in 6d"), so the panel has
+ * to be able to show the observed truth, not only the reported estimate.
+ */
+export function limitedFor(id, now = Date.now()) {
+  let until = 0;
+  const models = [];
+  for (const [key, at] of cooldowns) {
+    if (at <= now || !key.startsWith(id + '|')) continue;
+    if (at > until) until = at;
+    const model = key.slice(id.length + 1);
+    if (model !== '*' && !models.includes(model)) models.push(model);
+  }
+  return { limitedUntil: until || null, limitedModels: models };
+}
+
 // -------------------------------------------------------------- account CRUD
 
 export function listAccounts() {
@@ -521,6 +539,7 @@ export function listAccounts() {
     hasToken: Boolean(acc.refresh_token),
     latency: latencies.get(acc.id) || null,
     requests: requestCounts.get(acc.id) || 0,
+    ...limitedFor(acc.id),
   }));
 }
 
@@ -575,6 +594,7 @@ export async function limitsReport({ force = false } = {}) {
         tierName: acc.tierName || null,
         latency: latencies.get(acc.id) || null,
         requests: requestCounts.get(acc.id) || 0,
+        ...limitedFor(acc.id),
       };
       try {
         const quota = await accountQuota(acc, { force });

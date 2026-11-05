@@ -130,8 +130,11 @@ export async function handleStream(req, res, body) {
       const { message, status } = await upstreamErrorText(upstreamRes);
       const last = attempt === MAX_ATTEMPTS - 1;
       // A 4xx is deterministic: retrying a region rejection, a bad model id or a
-      // rejected schema three times only triples how long the failure takes.
-      const retryable = status === 429 || status >= 500;
+      // rejected schema three times only triples how long the failure takes. A 429
+      // is stronger than deterministic — upstream() has already walked the whole
+      // account pool for this model, so the wall is somebody else's quota, not a
+      // hiccup. Retrying it re-sends the entire prompt for another 429.
+      const retryable = status >= 500;
       if (!retryable || counters.content || counters.toolCalls || last) {
         pacer.flush();
         return openAiError(res, errorStatus(status), message.slice(0, 800) || 'upstream error', 'upstream_' + status);
@@ -249,6 +252,14 @@ export async function handleStream(req, res, body) {
     choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
   };
   if (usage) finalChunk.usage = usagePayload(usage);
+  if (usage) {
+    // The number that explains a burnt weekly limit, in the one place where it is
+    // visible: what this turn actually cost upstream.
+    log(
+      `usage: in=${usage.promptTokenCount || 0} out=${usage.candidatesTokenCount || 0}` +
+        ` think=${usage.thoughtsTokenCount || 0} cached=${usage.cachedContentTokenCount || 0}`,
+    );
+  }
   sseHead(res);
   res.write('data: ' + JSON.stringify(finalChunk) + '\n\n');
   res.write('data: [DONE]\n\n');

@@ -45,8 +45,9 @@ export async function handleOnce(req, res, body) {
     if (!upstreamRes.ok) {
       const { message, status } = await upstreamErrorText(upstreamRes);
       const last = attempt === MAX_ATTEMPTS - 1;
-      // Same rule as the streaming path: only a transient status is worth retrying.
-      const retryable = status === 429 || status >= 500;
+      // Same rule as the streaming path: only a transient status is worth retrying,
+      // and a 429 is not transient — the pool was already walked for this model.
+      const retryable = status >= 500;
       if (!retryable || text || toolCalls.length || last) {
         return openAiError(res, errorStatus(status), message.slice(0, 800) || 'upstream error', 'upstream_' + status);
       }
@@ -124,6 +125,13 @@ export async function handleOnce(req, res, body) {
   }
 
   flushSignatures();
+  if (usage) {
+    // Same line as the streaming path: what this turn actually cost upstream.
+    log(
+      `usage: in=${usage.promptTokenCount || 0} out=${usage.candidatesTokenCount || 0}` +
+        ` think=${usage.thoughtsTokenCount || 0} cached=${usage.cachedContentTokenCount || 0}`,
+    );
+  }
 
   sendJson(res, 200, {
     id: chunkId(),

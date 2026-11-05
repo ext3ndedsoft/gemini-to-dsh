@@ -78,12 +78,33 @@ export function htmlPage(res, status, title, detail) {
   res.end(body);
 }
 
-/** Pull an ISO reset time out of an upstream quota error, if it carries one. */
+/**
+ * Pull the reset moment out of an upstream quota error. Google phrases it two
+ * ways: an ISO `resetTime` field, or a sentence — "Individual quota reached.
+ * ... Resets in 156h57m47s." The sentence is the one that matters: it is the
+ * weekly wall, and reading it wrong means hammering a dead account every two
+ * minutes for the rest of the week.
+ */
 export function resetHint(text) {
-  const match = /"reset(?:Time|_time)"\s*:\s*"([^"]+)"/i.exec(text || '');
-  if (!match) return null;
-  const at = Date.parse(match[1]);
-  return Number.isFinite(at) ? at : null;
+  const raw = String(text || '');
+  const iso = /"reset(?:Time|_time)"\s*:\s*"([^"]+)"/i.exec(raw);
+  if (iso) {
+    const at = Date.parse(iso[1]);
+    if (Number.isFinite(at)) return at;
+  }
+  const sentence =
+    /resets? in\s+(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?)?)?)?/i.exec(
+      raw,
+    );
+  if (sentence) {
+    const ms =
+      Number(sentence[1] || 0) * 86_400_000 +
+      Number(sentence[2] || 0) * 3_600_000 +
+      Number(sentence[3] || 0) * 60_000 +
+      Number(sentence[4] || 0) * 1000;
+    if (ms > 0) return Date.now() + ms;
+  }
+  return null;
 }
 
 /**
