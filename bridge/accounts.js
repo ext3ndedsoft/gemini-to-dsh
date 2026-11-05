@@ -357,6 +357,26 @@ export function markCooling(acc, model, untilMs) {
   cooldowns.set(`${acc.id}|${model}`, Math.max(untilMs || Date.now() + 120_000, Date.now() + 15_000));
 }
 
+/**
+ * Worst five-hour bucket across the account's groups, 0..1, or null when it was
+ * never fetched. The five-hour window is the one that runs out first during a long
+ * session, so it is a better ranking signal than a single model's number.
+ */
+function fiveHourFraction(acc) {
+  const cached = quotaSummaryCache.get(acc.id);
+  const groups = cached && cached.value && cached.value.groups;
+  if (!Array.isArray(groups)) return null;
+  let worst = null;
+  for (const group of groups) {
+    for (const bucket of group.fiveHour || []) {
+      const value = typeof bucket.remaining === 'number' ? bucket.remaining : bucket.remainingFraction;
+      if (typeof value !== 'number') continue;
+      worst = worst === null ? value : Math.min(worst, value);
+    }
+  }
+  return worst;
+}
+
 function cooldownFor(acc, model) {
   return Math.max(cooldowns.get(`${acc.id}|${model}`) || 0, cooldowns.get(`${acc.id}|*`) || 0);
 }
@@ -374,8 +394,14 @@ export function orderedAccounts(model) {
       const until = cooldownFor(acc, model);
       const quota = modelsCache.get(acc.id);
       const known = quota && quota.models && quota.models[model] && quota.models[model].quotaInfo;
-      const fraction = known && typeof known.remainingFraction === 'number' ? known.remainingFraction : 0.5;
-      return { acc, until, cooling: until > now, fraction };
+      const modelFraction =
+        known && typeof known.remainingFraction === 'number' ? known.remainingFraction : null;
+      const fiveHour = fiveHourFraction(acc);
+      // A known five-hour number wins: it is the window that actually blocks a
+      // session. The per-model number still decides between accounts whose
+      // five-hour reading is identical, and stands in when none was fetched.
+      const fraction = fiveHour !== null ? fiveHour : modelFraction !== null ? modelFraction : 0.5;
+      return { acc, until, cooling: until > now, fraction, fiveHour };
     });
   const live = scored.filter((s) => !s.cooling).sort((a, b) => b.fraction - a.fraction);
   const waiting = scored.filter((s) => s.cooling).sort((a, b) => a.until - b.until);
@@ -383,7 +409,12 @@ export function orderedAccounts(model) {
   const pinned = current.pinned;
   if (pinned) {
     const index = ordered.findIndex((acc) => acc.id === pinned);
-    if (index > 0) ordered.unshift(...ordered.splice(index, 1));
+    const mine = scored.find((s) => s.acc.id === pinned);
+    // The pin means "prefer this one", not "burn this one to zero while another
+    // account sits above 5%". Below the floor the order stands as scored.
+    const floor = mine && mine.fiveHour !== null && mine.fiveHour <= EXHAUSTED_AT;
+    if (index > 0 && !floor) ordered.unshift(...ordered.splice(index, 1));
+    else if (index > 0) log(`accounts: ${pinned} is at ${Math.round(mine.fiveHour * 100)}% of its 5h window, not promoting it`);
   }
   return ordered;
 }
@@ -426,6 +457,10 @@ export function listAccounts({ withQuota = false } = {}) {
 
 const quotaSummaryCache = new Map(); // accountId -> { at, value }
 const QUOTA_SUMMARY_TTL = 60 * 1000;
+
+// Five percent of the five-hour window is the point where the next request is more
+// likely to be refused than served, so the pinned account stops being promoted there.
+const EXHAUSTED_AT = Number(process.env.AG_EXHAUSTED_AT || 0.05);
 
 /** Cached grouped quota. Failures cache too, so a broken account cannot slow the whole panel. */
 async function quotaSummary(acc) {

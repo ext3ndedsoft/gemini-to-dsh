@@ -72,12 +72,22 @@ function resolveMode(raw, merged) {
 	return 'dns';
 }
 
-/** Human-readable state of the current mode, for the panel. */
+/** Every channel a route may name. */
+export function channelNames(config) {
+	return ['proxy', ...Object.keys(config.providers || {}), 'direct'];
+}
+
+/** Human-readable state of the current mode, for the panel and for /vpn. */
 export function describeMode(config) {
 	const mode = resolveMode(config, config);
 	if (mode === 'proxy') {
 		const slot = config.proxy || config.fallbackProxy || '';
-		return { mode, label: 'Proxy', ready: Boolean(slot), detail: slot ? maskProxy(slot) : 'proxy url is not set' };
+		return {
+			mode,
+			label: 'Proxy',
+			ready: Boolean(slot),
+			detail: slot ? maskProxy(slot) : 'proxy url is not set'
+		};
 	}
 	if (mode === 'vpn') {
 		const vpn = vpnSnapshot();
@@ -92,12 +102,27 @@ export function describeMode(config) {
 	return { mode, label: 'DNS', ready: true, detail: routeChainOf(config).join(' > ') };
 }
 
-/** Every channel a route may name. */
-export function channelNames(config) {
-	return ['proxy', ...Object.keys(config.providers || {}), 'direct'];
+/** The ordered list of channels to attempt for one connection (always non-empty). */
+/**
+ * The same chain ordered by what was last measured: a channel that failed within the
+ * freshness window is tried after the ones that carried traffic. The watchdog would
+ * eventually rewrite the route, but its beat is a minute away and every request in
+ * between pays a connect timeout for a leg that is known to be dead.
+ */
+const FAILURE_MEMORY_MS = Number(process.env.AG_FAILURE_MEMORY_MS || 120000);
+
+export function requestChainOf(config) {
+	const chain = routeChainOf(config);
+	const now = Date.now();
+	const failed = (name) => {
+		const row = health.get(name);
+		if (!row || !row.lastFailAt) return 0;
+		return now - Date.parse(row.lastFailAt) < FAILURE_MEMORY_MS ? 1 : 0;
+	};
+	// Stable sort: unknown and healthy channels keep their configured order.
+	return [...chain].sort((a, b) => failed(a) - failed(b));
 }
 
-/** The ordered list of channels to attempt for one connection (always non-empty). */
 export function routeChainOf(config) {
 	const mode = resolveMode(config, config);
 	// VPN and direct never relay: the tunnel, or the operating system, is the path.
@@ -121,7 +146,11 @@ export function routeChainOf(config) {
  * config, because the defaults already carry `providers` and `route` and would
  * make every legacy file look like a modern one.
  */
-function normalizeConfig(raw) {
+function routeOfDefaults(known) {
+	return known.find((name) => name !== 'proxy' && name !== 'direct') || 'direct';
+}
+
+function normalizeConfig(raw, { fresh = false } = {}) {
 	const config = { ...DEFAULT_CONFIG, ...raw };
 	const providers = { ...DEFAULT_CONFIG.providers };
 	for (const [name, spec] of Object.entries(raw.providers || {})) {
@@ -130,7 +159,9 @@ function normalizeConfig(raw) {
 	// Legacy files predate channels: they configured one proxy plus an optional
 	// GeoHide fallback. Their behaviour is reproduced exactly — a chain that never
 	// knew about a new channel does not silently start using it.
-	const legacy = !raw.providers;
+	// A missing file is not an old file: the first run has to behave like the shipped
+	// defaults, because a machine that never wrote a config has never chosen GeoHide.
+	const legacy = !fresh && !raw.providers;
 	const geohideOff = raw.geohideFallback === false;
 	if (legacy && Array.isArray(raw.geohideDns) && raw.geohideDns.length) {
 		providers.geohide = { ...providers.geohide, dns: raw.geohideDns };
@@ -145,7 +176,9 @@ function normalizeConfig(raw) {
 				: geohideOff
 					? 'direct'
 					: 'geohide'
-			: 'geohide';
+			: known.includes(DEFAULT_CONFIG.route)
+				? DEFAULT_CONFIG.route
+				: routeOfDefaults(known);
 	let routeChain;
 	if (Array.isArray(raw.routeChain) && raw.routeChain.length) {
 		routeChain = raw.routeChain.filter((name) => known.includes(name));
@@ -163,16 +196,13 @@ let cache = { at: 0, config: null };
 
 export function readConfig(force = false) {
 	if (!force && cache.config && Date.now() - cache.at < 2000) return cache.config;
-	// No file at all: seed with the shipped defaults rather than an empty object,
-	// or normalizeConfig would treat a fresh install as a legacy proxy config and
-	// route it at a channel this release already knows is dead.
-	cache = { at: Date.now(), config: normalizeConfig({ ...DEFAULT_CONFIG }) };
+	cache = { at: Date.now(), config: normalizeConfig({}, { fresh: true }) };
 	try {
 		const raw = fs.readFileSync(CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '');
 		const parsed = JSON.parse(raw);
 		cache.config = normalizeConfig(parsed);
 	} catch {
-		/* no file yet: the built-in channels, which is why the first run works */
+		/* no file yet: defaults, which means direct */
 	}
 	if (process.env.AG_GOOGLE_PROXY) cache.config = { ...cache.config, enabled: true, proxy: process.env.AG_GOOGLE_PROXY };
 	return cache.config;
@@ -486,13 +516,14 @@ export async function probe(url, { proxy = '', timeout = 20000 } = {}) {
 const health = new Map();
 
 function markHealth(channel, ok, error, ms) {
-	const entry = health.get(channel) || { ok: 0, fail: 0, lastError: null, lastOkAt: null, lastMs: null };
+	const entry = health.get(channel) || { ok: 0, fail: 0, lastError: null, lastOkAt: null, lastFailAt: null, lastMs: null };
 	entry[ok ? 'ok' : 'fail'] += 1;
 	if (ok) {
 		entry.lastOkAt = new Date().toISOString();
 		entry.lastMs = Math.round(ms || 0);
 	} else {
 		entry.lastError = error?.message || String(error);
+		entry.lastFailAt = new Date().toISOString();
 	}
 	health.set(channel, entry);
 }
@@ -562,7 +593,9 @@ export async function benchChannels(options = {}) {
 	const config = options.config || readConfig(true);
 	const host = options.host || 'cloudaicompanion.googleapis.com';
 	// Benchmarking opens real connections, so it stays inside the allow list: a
-	// caller must not be able to point the route layer at an arbitrary host.
+	// caller must not be able to point the route layer at an arbitrary host — and on
+	// a machine where a link-local address is filtered, an unbounded connect is how
+	// this endpoint used to hang until the caller gave up.
 	if (!hostAllowed(host, config.allow)) {
 		throw new Error(`host not allowed: ${host}`);
 	}
@@ -582,6 +615,15 @@ export async function benchChannels(options = {}) {
 // The host whose edge we sample. It is the one the bridge actually calls, so a
 // probe that passes means real traffic will pass too.
 const PROBE_HOST = process.env.AG_WATCHDOG_HOST || 'daily-cloudcode-pa.googleapis.com';
+
+// Google answers a request from an unsupported country with a refusal body, not with a
+// dropped connection: the transport is fine, the route is useless.
+const REGION_BLOCK = /not available in your country|not supported in your (country|region)|unsupported region|location is not supported/i;
+
+function parseStatusLine(buffer) {
+	const match = buffer.match(/^HTTP\/1\.[01]\s+(\d{3})/);
+	return match ? Number(match[1]) : null;
+}
 
 /**
  * One channel, end to end: DNS, TCP, then a verified TLS handshake against the
@@ -610,14 +652,48 @@ export async function probeChannel(channel, config, { host = PROBE_HOST, timeout
 			}
 			// Read the edge before the handshake tears the socket down.
 			const edge = String(socket?.remoteAddress || '') || null;
-			await new Promise((resolve, reject) => {
+			// A finished handshake only proves the edge speaks TLS. An edge can complete the
+			// handshake and then refuse the request itself — that is a channel that looks alive
+			// while carrying nothing, and it is exactly how a blocked route kept winning the
+			// chain. So ask for one real response and look at what comes back.
+			const answer = await new Promise((resolve, reject) => {
 				const secure = tls.connect({ socket, servername: host, rejectUnauthorized: true }, () => {
-					secure.destroy();
-					resolve();
+					secure.write(
+						`GET / HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: antigravity-bridge/probe\r\nConnection: close\r\n\r\n`
+					);
 				});
-				secure.once('error', reject);
+				let buffer = '';
+				let quiet = null;
+				const finish = (value) => {
+					clearTimeout(quiet);
+					try {
+						secure.destroy();
+					} catch {
+						/* already gone */
+					}
+					resolve(value);
+				};
+				const settle = () => finish({ status: parseStatusLine(buffer), head: buffer.slice(0, 512) });
+				secure.on('data', (chunk) => {
+					buffer += chunk.toString('latin1');
+					if (buffer.length >= 512) return settle();
+					// The status line arrives first and often alone; a short grace period
+					// lets a refusal body follow so the reason can be told apart from success.
+					if (!quiet) quiet = setTimeout(settle, 150);
+				});
+				secure.once('end', settle);
+				secure.once('error', (error) => {
+					clearTimeout(quiet);
+					reject(error);
+				});
 			});
-			return { ok: true, edge };
+			if (!answer.status) return { ok: false, error: 'edge closed without a response', edge };
+			if (answer.status >= 400 && answer.status < 500 && REGION_BLOCK.test(answer.head)) {
+				// A regional refusal is a dead route for this bridge even though the
+				// transport works, which is the difference that matters here.
+				return { ok: false, error: `edge refused for this region (${answer.status})`, edge, status: answer.status };
+			}
+			return { ok: true, edge, status: answer.status };
 		} catch (error) {
 			try {
 				socket?.destroy();
@@ -648,6 +724,28 @@ export async function probeChannel(channel, config, { host = PROBE_HOST, timeout
 }
 
 /**
+ * Same sample, shared. The watchdog, the /watchdog endpoint and a manual bench all ask
+ * about the same channels within a minute of each other; probing each time means paying
+ * three timeouts when Google is slow, which is how a request path ends up waiting on a
+ * question someone else already answered.
+ */
+const probeCache = new Map();
+const PROBE_TTL_MS = Number(process.env.AG_PROBE_TTL_MS || 30000);
+
+export async function probeChannelCached(channel, config, { ttl = PROBE_TTL_MS, ...options } = {}) {
+	const key = `${channel}|${options.host || PROBE_HOST}`;
+	const hit = probeCache.get(key);
+	if (hit && Date.now() - hit.at < ttl) return { ...hit.value, cached: true };
+	const value = await probeChannel(channel, config, options);
+	probeCache.set(key, { at: Date.now(), value });
+	return value;
+}
+
+export function clearProbeCache() {
+	probeCache.clear();
+}
+
+/**
  * Puts the winning channel first, keeps the rest in their existing order, and
  * optionally sends the channel that just died to the back. `direct` stays the end
  * of the line: a demoted channel goes after it, never before.
@@ -673,7 +771,7 @@ export function promoteChannel(chain, winner, demote = null) {
  */
 export function createWatchdog({
 	log = () => {},
-	probe = probeChannel,
+	probe = probeChannelCached,
 	apply = writeConfig,
 	readConfig: read = readConfig,
 	threshold = 2,
@@ -712,6 +810,11 @@ export function createWatchdog({
 
 			for (const candidate of routeChainOf(config)) {
 				if (candidate === current) continue;
+				// direct means "no relay at all": when the machine can reach Google, it is
+				// indistinguishable from a working channel, and when it cannot, it is the
+				// problem. Promoting it would put a route the bridge cannot verify in front
+				// of relays that do work.
+				if (candidate === 'direct') continue;
 				if (candidate === 'proxy' && !(config.proxy || config.fallbackProxy)) continue;
 				const check = await probe(candidate, config);
 				if (!check.ok) {
@@ -739,8 +842,45 @@ export function createWatchdog({
 	return { state, tick, intervalMs };
 }
 
+/**
+ * A fingerprint of the non-internal IPv4 addresses. Interfaces coming and going is the
+ * cheap, portable signal that the machine changed networks — after that every cached
+ * answer about which relay is alive is stale, because it was measured from somewhere else.
+ */
+function networkFingerprint() {
+	const parts = [];
+	for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+		for (const address of addresses || []) {
+			if (address.internal) continue;
+			if (address.family !== 'IPv4' && address.family !== 4) continue;
+			parts.push(`${name}:${address.address}`);
+		}
+	}
+	return parts.sort().join('|');
+}
+
+export function startNetworkWatch({ log = () => {}, intervalMs = Number(process.env.AG_NETWORK_MS || 10000) } = {}) {
+	let last = networkFingerprint();
+	let lastChange = null;
+	const timer = setInterval(() => {
+		const next = networkFingerprint();
+		if (next === last) return;
+		const before = last;
+		last = next;
+		lastChange = new Date().toISOString();
+		clearProbeCache();
+		const config = readConfig(true);
+		for (const name of channelNames(config)) forgetChannel(name, config);
+		log(`egress: network changed, dropped every cached channel answer`);
+		return { before, after: next, at: lastChange };
+	}, intervalMs);
+	timer.unref();
+	return { timer, state: () => ({ fingerprint: last, lastChange }) };
+}
+
 export function startEgress({ log = () => {}, port = 0 } = {}) {
 	startVpnWatch();
+	const networkWatch = startNetworkWatch({ log });
 	readConfig(true); // a fresh shim never starts on a stale cached config
 	const stats = { total: 0, proxied: 0, direct: 0, failed: 0, lastError: null, lastRoute: null, lastHost: null, lastAt: null };
 	const watchdog = createWatchdog({ log });
@@ -748,6 +888,57 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 		watchdog.tick().catch((error) => log(`watchdog: tick failed (${error.message})`));
 	}, watchdog.intervalMs);
 	watchdogTimer.unref();
+
+	// One serializer for the whole state, so the polled answer and the pushed one can never
+	// disagree. The panel subscribes and sleeps instead of asking every five seconds.
+	const describeState = () => {
+		const live = readConfig();
+		return {
+			ok: true,
+			stats,
+			mode: live.mode,
+			modeInfo: describeMode(live),
+			vpn: vpnSnapshot(),
+			route: live.route,
+			chain: routeChainOf(live),
+			channels: channelNames(live),
+			health: healthSnapshot(live),
+			watchdog: { ...watchdog.state, intervalMs: watchdog.intervalMs },
+			network: networkWatch ? networkWatch.state() : null,
+			config: {
+				...live,
+				proxy: live.proxy ? maskProxy(live.proxy) : '',
+				fallbackProxy: live.fallbackProxy ? maskProxy(live.fallbackProxy) : ''
+			}
+		};
+	};
+
+	const sseClients = new Set();
+	let lastPushed = '';
+	const pushState = () => {
+		if (!sseClients.size) return;
+		let text;
+		try {
+			text = JSON.stringify(describeState());
+		} catch {
+			return;
+		}
+		// The watchdog stamps every tick, so a raw comparison would push a frame every few
+		// seconds forever. Anything that matters for the panel is still compared.
+		const key = text.replace(/"lastProbeAt":"[^"]*",?/, '');
+		if (key === lastPushed) return;
+		lastPushed = key;
+		const frame = `data: ${text}\n\n`;
+		for (const socket of sseClients) {
+			try {
+				socket.write(frame);
+			} catch {
+				sseClients.delete(socket);
+			}
+		}
+	};
+	const pushTimer = setInterval(pushState, 2500);
+	pushTimer.unref();
 
 	const server = net.createServer(async (client) => {
 		client.on('error', () => {});
@@ -762,11 +953,13 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 		const requestLine = (head.head.split('\r\n')[0] || '').trim();
 		const [method, target] = requestLine.split(' ');
 
-		// Anything that is not CONNECT is the settings surface (a DSH overlay or a
-		// CLI talks to it), so it answers JSON. Only loopback origins are echoed
-		// back: this port can change the routing, and a random page in the same
-		// browser should not be able to redirect traffic.
+		// Anything that is not CONNECT is the settings surface (the DSH overlay and
+		// the /ag command talk to it), so it answers JSON and allows the browser.
 		if (method !== 'CONNECT') {
+			// This port can rewrite the route, so it is not open to the browser at large: a
+			// page on any origin would otherwise be able to send traffic somewhere else. Only
+			// a loopback origin is echoed back, and a write from anywhere else is refused
+			// before the body is read.
 			const origin = (head.head.match(/^origin:[ \t]*(.+)$/im) || [])[1]?.trim();
 			const loopbackOrigin = origin && /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(origin);
 			const cors = {
@@ -791,6 +984,23 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				send(200, { ok: true });
 				return;
 			}
+			const declaredType = (head.head.match(/^content-type:[ \t]*(.+)$/im) || [])[1]?.trim().toLowerCase() || '';
+			if (method === 'POST') {
+				if (origin && !loopbackOrigin) {
+					send(403, { ok: false, error: 'cross-origin writes are refused' });
+					return;
+				}
+				// A text/plain POST is a simple request and would arrive without a preflight,
+				// so the declared type has to be JSON for the body to count.
+				if (!declaredType.startsWith('application/json')) {
+					send(415, { ok: false, error: 'content-type must be application/json' });
+					return;
+				}
+			}
+			if (method === 'GET' && (target.startsWith('/bench') || target.startsWith('/watchdog') || target.startsWith('/events')) && origin && !loopbackOrigin) {
+				send(403, { ok: false, error: 'cross-origin reads are refused' });
+				return;
+			}
 			let body = head.rest || Buffer.alloc(0);
 			if (method === 'POST') {
 				const declared = Number((head.head.match(/content-length:\s*(\d+)/i) || [])[1] || 0);
@@ -803,31 +1013,27 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 					body = Buffer.concat([body, chunk]);
 				}
 			}
-			const describe = () => {
-				const live = readConfig();
-				return {
-					ok: true,
-					stats,
-					mode: live.mode,
-					modeInfo: describeMode(live),
-					vpn: vpnSnapshot(),
-					route: live.route,
-					chain: routeChainOf(live),
-					channels: channelNames(live),
-					health: healthSnapshot(live),
-					watchdog: { ...watchdog.state, intervalMs: watchdog.intervalMs },
-					config: {
-						...live,
-						proxy: live.proxy ? maskProxy(live.proxy) : '',
-						fallbackProxy: live.fallbackProxy ? maskProxy(live.fallbackProxy) : ''
-					}
-				};
-			};
-			// Side-effecting reads: /watchdog runs a probe and can move the route,
-			// /bench opens real connections. Neither is read-only, so both get the
-			// write rule — a page in this browser must not be able to trigger them.
-			if (method === 'GET' && (target.startsWith('/bench') || target.startsWith('/watchdog')) && origin && !loopbackOrigin) {
-				send(403, { ok: false, error: 'cross-origin probes are refused' });
+			const describe = describeState;
+			if (method === 'GET' && target.startsWith('/events')) {
+				client.write(
+					[
+						'HTTP/1.1 200 OK',
+						'Content-Type: text/event-stream; charset=utf-8',
+						'Cache-Control: no-store',
+						'Connection: keep-alive',
+						'Access-Control-Allow-Origin: *',
+						'',
+						''
+					].join('\r\n')
+				);
+				sseClients.add(client);
+				client.on('close', () => sseClients.delete(client));
+				client.on('error', () => sseClients.delete(client));
+				try {
+					client.write(`data: ${JSON.stringify(describeState())}\n\n`);
+				} catch {
+					sseClients.delete(client);
+				}
 				return;
 			}
 			if (method === 'GET' && target.startsWith('/bench')) {
@@ -837,6 +1043,7 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				try {
 					bench = await benchChannels({ host: query.get('host') || undefined, rounds });
 				} catch (error) {
+					if (!/host not allowed/.test(error.message)) throw error;
 					send(400, { ok: false, error: error.message });
 					return;
 				}
@@ -852,20 +1059,6 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				return;
 			}
 			if (method === 'POST') {
-				// This surface reroutes traffic, so it must not be reachable by a page
-				// that happens to be open in the same browser. CORS alone cannot do it:
-				// a text/plain POST is a "simple request" and runs without a preflight.
-				// Requiring JSON forces that preflight, and a non-loopback Origin is
-				// refused before the body is even parsed.
-				const declaredType = (head.head.match(/^content-type:[ \t]*(.+)$/im) || [])[1]?.trim().toLowerCase() || '';
-				if (origin && !loopbackOrigin) {
-					send(403, { ok: false, error: 'cross-origin writes are refused' });
-					return;
-				}
-				if (!declaredType.startsWith('application/json')) {
-					send(415, { ok: false, error: 'content-type must be application/json' });
-					return;
-				}
 				let patch;
 				try {
 					patch = JSON.parse(body.toString('utf8') || '{}');
@@ -926,6 +1119,12 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 						return;
 					}
 					for (const [name, spec] of Object.entries(patch.providers)) {
+				// A null spec removes the channel: a custom DNS the user typed once should be
+				// removable from the same panel it was added in.
+				if (spec === null) {
+					delete config.providers[name];
+					continue;
+				}
 						if (!Array.isArray(spec?.dns) || !spec.dns.length) {
 							send(400, { ok: false, error: `provider ${name} needs a non-empty dns array` });
 							return;
@@ -947,7 +1146,7 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 		const targetPort = Number(target.slice(lastColon + 1)) || 443;
 		const allowed = hostAllowed(host, config.allow);
 		// Only allowlisted hosts get routed; everything else always goes straight out.
-		const chain = config.enabled && allowed ? routeChainOf(config) : ['direct'];
+		const chain = config.enabled && allowed ? requestChainOf(config) : ['direct'];
 
 		stats.total += 1;
 		stats.lastHost = host;
@@ -1047,6 +1246,16 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				watchdog: watchdog.state,
 				close: () => {
 					clearInterval(watchdogTimer);
+					clearInterval(pushTimer);
+					if (networkWatch) clearInterval(networkWatch.timer);
+					for (const socket of sseClients) {
+						try {
+							socket.end();
+						} catch {
+							/* already closed */
+						}
+					}
+					sseClients.clear();
 					server.close();
 				}
 			});

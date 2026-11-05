@@ -151,7 +151,7 @@ Three knobs: `AG_IMAGE_MODEL` picks the model, `AG_IMAGE_DIR` the folder, `AG_IM
 | `VPN` | nothing: traffic already leaves through a tunnel, the shim only checks that it is up |
 | `Direct` | nothing: no relaying at all |
 
-The mode is an explicit `mode` field in `~/.dsh/ag-egress.json`, not a side effect of whichever fields happen to be set. Older files without a mode are read from the same fields as before. Which one fits your network, and how to switch from a terminal — [docs/transports.md](docs/transports.md).
+The mode is an explicit `mode` field in `~/.dsh/ag-egress.json`, not a side effect of whichever fields happen to be set. It is also settable from the panel, which is the point: each mode reveals what it needs — DNS shows a chip per channel, the chain chip and a field for your own resolver, Proxy shows the address, the fallback and a remove button — and every click is one `POST` to the shim. The panel renders what the shim reports and never keeps its own copy, and the proxy field is never prefilled with the masked value, so saving an empty field keeps the address you already have. Older files without a mode are read from the same fields as before. Which one fits your network, and how to switch from a terminal — [docs/transports.md](docs/transports.md).
 
 **The panel is a plugin.** Step by step, from an empty machine to a working panel: [docs/plugin-install.md](docs/plugin-install.md).
 

@@ -92,6 +92,19 @@ window.__ModuleLoader__.load({
 	transition:.18s cubic-bezier(.3,.8,.4,1)}
 .agq .switch.on{background:linear-gradient(135deg,rgba(139,92,246,.55),rgba(34,211,238,.45));border-color:rgba(167,139,250,.55)}
 .agq .switch.on i{left:21px;background:#f4f4ff;box-shadow:0 0 10px rgba(167,139,250,.9)}
+.agq .sub{margin-top:9px;padding:9px 10px 10px;border-radius:12px;border:1px solid var(--line);
+	background:rgba(255,255,255,.025);animation:agq-rise .24s cubic-bezier(.2,.9,.25,1) both}
+.agq .sub .subhead{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.agq .sub .input{margin-top:0;margin-bottom:6px}
+.agq .sub .foot{margin-top:4px}
+.agq .chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.agq .chip-btn{font-size:10.5px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+	color:var(--muted);transition:border-color .15s,color .15s,transform .12s,background .15s}
+.agq .chip-btn:hover{color:var(--text);border-color:var(--line-strong);background:rgba(255,255,255,.04)}
+.agq .chip-btn:active{transform:scale(.97)}
+.agq .chip-btn.on{color:#0a0a10;font-weight:600;border-color:transparent;
+	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 4px 14px rgba(139,92,246,.35)}
+.agq .hint{font-size:9.5px;color:var(--muted);margin-top:6px;line-height:1.4}
 .agq .sect{display:flex;align-items:center;gap:8px;margin:14px 2px 8px;font-size:9.5px;
 	letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .agq .sect:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
@@ -252,8 +265,30 @@ window.__ModuleLoader__.load({
 
 			React.useEffect(() => {
 				load();
-				const timer = setInterval(load, 15000);
-				return () => clearInterval(timer);
+				// The shim pushes its whole state on change. Subscribing means the panel does not
+				// ask on a timer — when nothing happens, nothing is sent, and when a mode is
+				// switched the answer arrives in the same breath instead of on the next beat.
+				let source = null;
+				try {
+					source = new EventSource(EGRESS + "/events");
+					source.onmessage = (event) => {
+						try {
+							setState(JSON.parse(event.data));
+							setOnline(true);
+						} catch {
+							/* a frame cut in half heals on the next one */
+						}
+					};
+				} catch {
+					/* no EventSource: the slow poll below still keeps the panel honest */
+				}
+				const timer = setInterval(load, 60000);
+				return () => {
+					clearInterval(timer);
+					try {
+						source?.close();
+					} catch {}
+				};
 			}, [load]);
 
 			return { state, online, reload: load, setState };
@@ -334,78 +369,251 @@ window.__ModuleLoader__.load({
 
 		/* ---------------------------------------------------------------- blocks */
 
-		function Transport({ egress, onMode, onToggle, onProxy, onTest, busy, note }) {
-			const state = egress.state;
-			const mode = (state && state.mode) || "dns";
-			const info = (state && state.modeInfo) || { label: mode, detail: "", ready: false };
-			const vpn = (state && state.vpn) || null;
-			const stats = (state && state.stats) || null;
-			const proxyValue = (state && state.config && state.config.proxy) || "";
+		function DnsPanel({ channels, active, chain, providers, draft, setDraft, busy, onPatch }) {
+			const head = chain[0] || channels[0] || '';
+			const current = active && active !== 'direct' ? active : '';
 
-			const [draft, setDraft] = React.useState("");
-			React.useEffect(() => {
-				if (proxyValue) setDraft("");
-			}, [proxyValue]);
-
-			const dotColor = !egress.online ? "var(--bad)" : info.ready ? "var(--good)" : "var(--warn)";
-			const detail = !egress.online
-				? "egress shim is not running"
-				: mode === "proxy"
-					? proxyValue || "proxy url is not set"
-					: mode === "vpn"
-						? vpn && vpn.connected
-							? (vpn.name || "tunnel is up") + (vpn.kind ? " · " + vpn.kind : "")
-							: "no VPN adapter is up"
-						: mode === "direct"
-							? "no relay — traffic leaves as is"
-							: (state && state.chain ? state.chain.join(" › ") : "");
+			const saveCustom = () => {
+				const ips = draft
+					.split(/[\s,]+/)
+					.map((item) => item.trim())
+					.filter(Boolean);
+				if (!ips.length) return;
+				onPatch(
+					{
+						providers: { custom: { dns: ips, seeds: ['cloudaicompanion.googleapis.com'] } },
+						route: 'custom',
+						mode: 'dns'
+					},
+					'свой DNS сохранён: ' + ips.join(', ')
+				);
+			};
 
 			return h(
-				"div",
+				'div',
+				{ className: 'sub' },
+				h('div', { className: 'subhead' }, 'выход DNS'),
+				h(
+					'div',
+					{ className: 'chips' },
+					h(
+						'button',
+						{
+							className: 'chip-btn' + (current === head ? ' on' : ''),
+							onClick: () => onPatch({ mode: 'dns', route: head }, 'маршрут: ' + head),
+							title: chain.join(' > ')
+						},
+						'наша цепочка'
+					),
+					channels.map((name) =>
+						h(
+							'button',
+							{
+								key: name,
+								className: 'chip-btn' + (current === name ? ' on' : ''),
+								onClick: () => onPatch({ mode: 'dns', route: name }, 'маршрут: ' + name),
+								title: ((providers[name] && providers[name].dns) || []).join(', ')
+							},
+							name
+						)
+					),
+					providers.custom
+						? h(
+								'button',
+								{
+									className: 'chip-btn' + (current === 'custom' ? ' on' : ''),
+									onClick: () => onPatch({ mode: 'dns', route: 'custom' }, 'маршрут: свой DNS'),
+									title: (providers.custom.dns || []).join(', ')
+								},
+								'свой'
+							)
+						: null
+				),
+				h('input', {
+					className: 'input',
+					placeholder: 'свой DNS: 1.2.3.4, 5.6.7.8',
+					value: draft,
+					onChange: (event) => setDraft(event.target.value),
+					onKeyDown: (event) => {
+						if (event.key === 'Enter') saveCustom();
+					}
+				}),
+				h(
+					'div',
+					{ className: 'foot' },
+					h('button', { className: 'btn wide', disabled: busy || !draft.trim(), onClick: saveCustom }, 'сохранить свой DNS'),
+					providers.custom
+						? h(
+								'button',
+								{
+									className: 'btn',
+									disabled: busy,
+									onClick: () => {
+										setDraft('');
+										onPatch({ route: head, providers: { custom: null } }, 'свой DNS убран');
+									}
+								},
+								'убрать'
+							)
+						: null
+				),
+				h('div', { className: 'hint' }, 'адреса пишутся в ~/.dsh/ag-egress.json и переживают перезапуск')
+			);
+		}
+
+		function ProxyPanel({ proxy, fallback, setProxy, setFallback, configured, busy, onPatch }) {
+			const save = () => {
+				const patch = { mode: 'proxy' };
+				if (proxy.trim()) patch.proxy = proxy.trim();
+				if (fallback.trim()) patch.fallbackProxy = fallback.trim();
+				onPatch(patch, 'прокси сохранён');
+			};
+
+			return h(
+				'div',
+				{ className: 'sub' },
+				h('div', { className: 'subhead' }, 'выход через прокси'),
+				h('input', {
+					className: 'input',
+					placeholder: 'http://host:port или socks5://host:port',
+					value: proxy,
+					onChange: (event) => setProxy(event.target.value),
+					onKeyDown: (event) => {
+						if (event.key === 'Enter') save();
+					}
+				}),
+				h('input', {
+					className: 'input',
+					placeholder: 'запасной прокси — необязательно',
+					value: fallback,
+					onChange: (event) => setFallback(event.target.value)
+				}),
+				h(
+					'div',
+					{ className: 'foot' },
+					h('button', { className: 'btn wide', disabled: busy || !proxy.trim(), onClick: save }, 'сохранить прокси'),
+					configured
+						? h(
+								'button',
+								{
+									className: 'btn',
+									disabled: busy,
+									onClick: () => onPatch({ proxy: '', fallbackProxy: '', mode: 'dns' }, 'прокси убран')
+								},
+								'убрать'
+							)
+						: null
+				),
+				h(
+					'div',
+					{ className: 'hint' },
+					configured
+						? 'сохранённый адрес скрыт — пустое поле оставляет его как есть'
+						: 'адрес хранится в ~/.dsh/ag-egress.json, ключ проверяется при сохранении'
+				)
+			);
+		}
+
+		function Transport({ egress, busy, note, onMode, onToggle, onPatch }) {
+			const state = egress.state;
+			const mode = (state && state.mode) || 'dns';
+			const info = (state && state.modeInfo) || { label: mode, detail: '', ready: false };
+			const config = (state && state.config) || {};
+			const providers = config.providers || {};
+			const chain = (state && state.chain) || [];
+			const stats = (state && state.stats) || null;
+			const vpn = (state && state.vpn) || null;
+
+			const channels = ((state && state.channels) || []).filter(
+				(name) => name !== 'proxy' && name !== 'direct' && name !== 'custom'
+			);
+
+			// Drafts are seeded once from the saved config: typing must not be overwritten by the
+			// five-second refresh of the same state.
+			const [dnsDraft, setDnsDraft] = React.useState('');
+			const [proxy, setProxy] = React.useState('');
+			const [fallback, setFallback] = React.useState('');
+			React.useEffect(() => {
+				if (!dnsDraft && providers.custom && providers.custom.dns) setDnsDraft(providers.custom.dns.join(', '));
+			}, [providers.custom]);
+			React.useEffect(() => {
+				// The shim answers with the proxy masked, and a masked value must never end up
+				// back in the field: saving it would replace a working address with bullets.
+				const saved = config.proxy && !config.proxy.includes("•") ? config.proxy : "";
+				if (!proxy && saved) setProxy(saved);
+			}, [config.proxy]);
+			React.useEffect(() => {
+				if (!fallback && config.fallbackProxy) setFallback(config.fallbackProxy);
+			}, [config.fallbackProxy]);
+
+			const dotColor = !egress.online ? 'var(--bad)' : info.ready ? 'var(--good)' : 'var(--warn)';
+			const detail = !egress.online
+				? 'egress shim is not running'
+				: mode === 'proxy'
+					? config.proxy || 'proxy url is not set'
+					: mode === 'vpn'
+						? vpn && vpn.connected
+							? (vpn.name || 'tunnel is up') + (vpn.kind ? ' · ' + vpn.kind : '')
+							: 'no VPN adapter is up'
+						: mode === 'direct'
+							? 'no relay — traffic leaves as is'
+							: chain.join(' › ');
+
+			return h(
+				'div',
 				null,
 				h(Segmented, { value: mode, onChange: onMode }),
-				h("div", { className: "state" }, h("span", { className: "dot", style: { background: dotColor, boxShadow: "0 0 8px " + dotColor } }), h("em", { key: detail }, detail)),
 				h(
-					"div",
-					{ className: "relay" },
-					h(
-						"div",
-						{ className: "txt" },
-						h("b", null, "Relay"),
-						h("span", null, info.label + " · " + (stats ? stats.proxied + " ok · " + stats.failed + " fail" : "no stats"))
-					),
-					h("button", {
-						className: "switch" + (mode === "direct" ? "" : " on"),
-						role: "switch",
-						"aria-checked": mode !== "direct",
-						"aria-label": "relay",
-						onClick: onToggle
-					}, h("i"))
+					'div',
+					{ className: 'state' },
+					h('span', { className: 'dot', style: { background: dotColor, boxShadow: '0 0 8px ' + dotColor } }),
+					h('em', { key: detail }, detail)
 				),
-				mode === "proxy"
-					? h(
-							"div",
-							null,
-							h("input", {
-								className: "input",
-								placeholder: proxyValue || "socks5://127.0.0.1:1080",
-								value: draft,
-								onChange: (event) => setDraft(event.target.value),
-								onKeyDown: (event) => {
-									if (event.key === "Enter" && draft.trim()) onProxy(draft.trim());
-								}
-							}),
-							h(
-								"div",
-								{ className: "foot" },
-								h("button", { className: "btn wide", disabled: busy || !draft.trim(), onClick: () => draft.trim() && onProxy(draft.trim()) }, "save proxy"),
-								h("button", { className: "btn", disabled: busy, onClick: () => onProxy("") }, "clear")
-							)
-						)
+				mode === 'dns'
+					? h(DnsPanel, {
+							channels,
+							active: config.route,
+							chain,
+							providers,
+							draft: dnsDraft,
+							setDraft: setDnsDraft,
+							busy,
+							onPatch
+						})
 					: null,
-				note || stats
-					? h("div", { className: "note" }, note || (stats.lastError ? "last error: " + stats.lastError : "last: " + (stats.lastHost || "—")))
-					: null
+				mode === 'proxy'
+					? h(ProxyPanel, {
+							proxy,
+							fallback,
+							setProxy,
+							setFallback,
+							configured: Boolean(config.proxy || config.fallbackProxy),
+							busy,
+							onPatch
+						})
+					: null,
+				h(
+					'div',
+					{ className: 'relay' },
+					h(
+						'div',
+						{ className: 'txt' },
+						h('b', null, 'Relay'),
+						h('span', null, info.label + ' · ' + (stats ? stats.proxied + ' ok · ' + stats.failed + ' fail' : 'no stats'))
+					),
+					h(
+						'button',
+						{
+							className: 'switch' + (mode === 'direct' ? '' : ' on'),
+							role: 'switch',
+							'aria-checked': mode !== 'direct',
+							'aria-label': 'relay',
+							onClick: onToggle
+						},
+						h('i')
+					)
+				),
+				note ? h('div', { className: 'note' }, note) : null
 			);
 		}
 
@@ -562,8 +770,6 @@ window.__ModuleLoader__.load({
 				return patch({ mode: restore });
 			};
 
-			const saveProxy = (url) => patch(url ? { proxy: url, mode: "proxy" } : { proxy: "" });
-
 			const test = async () => {
 				setBusy(true);
 				setNote("asking the model…");
@@ -638,8 +844,7 @@ h(Transport, {
 									note,
 									onMode: setMode,
 									onToggle: toggleRelay,
-									onProxy: saveProxy,
-									onTest: test
+									onPatch: patch
 								}),
 								h("div", { className: "sect" }, "accounts"),
 								accounts.length

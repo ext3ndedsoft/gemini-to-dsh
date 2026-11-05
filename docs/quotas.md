@@ -51,6 +51,26 @@ groups. The lookup walks `daily-cloudcode-pa`, then `cloudcode-pa`, then the san
 on a request that carried a project is retried once without it, exactly as the desktop app does;
 a `401` ends the lookup immediately, because another host will reject the same credential.
 
+## Which account gets the request
+
+The bridge does not keep a "current account" cursor. Every request asks for the accounts in
+order and takes the first that is not cooling down:
+
+1. **Pinned first** — unless its five-hour window is nearly empty, see below.
+2. **Then by five-hour remaining**, worst bucket across the account's groups, descending.
+   The five-hour window is the one that ends a session, so it orders the list; the per-model
+   number only breaks ties, and stands in when no group data has been fetched yet.
+3. **Cooling accounts last**, ordered by how long until they are usable again.
+
+The pin means *prefer this one*, not *burn this one to zero*. At five percent or less
+(`AG_EXHAUSTED_AT`) the pinned account loses its promotion and the account with more
+five-hour headroom is used — and the reason is logged, so a switch that looks mysterious has a
+line to point at. Below the floor the scored order stands, so if every account is nearly empty
+the one with the most left still wins.
+
+When the upstream answers `429`, the account is marked cooling and the request moves to the
+next one in the same call, so a refusal costs a retry instead of a failed turn.
+
 ## In the response
 
 `/limits` keeps its shape and adds one field per account:
