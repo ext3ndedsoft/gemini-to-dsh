@@ -13,11 +13,10 @@ import path from 'node:path';
 import { SIGNATURE_FILE, log } from './config.js';
 
 const MAX_ENTRIES = 4000;
-const SAVE_DELAY_MS = 400;
 
 const calls = new Map();
 let loaded = false;
-let saveTimer = null;
+let dirty = false;
 
 function load() {
   if (loaded) return;
@@ -32,13 +31,14 @@ function load() {
   }
 }
 
-function scheduleSave() {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    saveSignatures();
-  }, SAVE_DELAY_MS);
-  if (typeof saveTimer.unref === 'function') saveTimer.unref();
+/**
+ * Written once per turn, not once per tool call: the debounce used to stringify
+ * and write the whole cache in the middle of a streaming answer.
+ */
+export function flushSignatures() {
+  if (!dirty) return;
+  dirty = false;
+  saveSignatures();
 }
 
 export function saveSignatures() {
@@ -66,7 +66,7 @@ export function rememberCall(id, signature, name) {
   load();
   calls.set(id, { signature, name });
   while (calls.size > MAX_ENTRIES) calls.delete(calls.keys().next().value);
-  if (signature) scheduleSave();
+  if (signature) dirty = true;
 }
 
 export function signatureFor(id) {

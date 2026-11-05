@@ -63,13 +63,25 @@ const SCOPES = [
 
 export const CREDS_FILE =
   process.env.AG_CREDS_FILE || path.join(os.homedir(), '.gemini', 'oauth_creds.json');
-// The account pool lives inside the quota plugin, not next to the Google session:
-// a backup of the plugin then carries the accounts with it. The bridge is started
-// from several places (DSH supervisor, the logon task, start.cmd), so this default
-// – not an env var – is what keeps all of them on the same file.
+// The account pool lives beside the Google session, never inside the plugin
+// folder: a backup or a published copy of the plugin must not carry refresh
+// tokens with it. The bridge is started from several places (DSH supervisor, the
+// logon task, start.cmd), so this default – not an env var – is what keeps all of
+// them on the same file. Moving the credentials moves the pool with them.
 const STORE_FILE =
   process.env.AG_ACCOUNTS_FILE ||
-  path.join(os.homedir(), '.dsh', 'profiles', 'web', 'plugins', 'ag-limits', 'accounts.json');
+  path.join(path.dirname(CREDS_FILE), 'dsh-bridge', 'accounts.json');
+// Builds before this one kept the pool inside the quota plugin. It is read once,
+// then written under the new path so the tokens stop travelling with the plugin.
+const LEGACY_STORE_FILE = path.join(
+  os.homedir(),
+  '.dsh',
+  'profiles',
+  'web',
+  'plugins',
+  'ag-limits',
+  'accounts.json',
+);
 
 const MODELS_TTL = 45_000;
 const META_TTL = 3_600_000;
@@ -167,15 +179,17 @@ function bootstrapNative() {
 export function loadStore() {
   if (store) return store;
   let parsed = null;
+  let source = STORE_FILE;
+  if (!fs.existsSync(source) && fs.existsSync(LEGACY_STORE_FILE)) source = LEGACY_STORE_FILE;
   try {
     // A BOM or a torn write must not silently wipe the pool: the file is copied
     // aside and the failure logged before starting from an empty store.
-    const text = fs.readFileSync(STORE_FILE, 'utf8').replace(/^\uFEFF/, '');
+    const text = fs.readFileSync(source, 'utf8').replace(/^\uFEFF/, '');
     parsed = JSON.parse(text);
   } catch (err) {
     if (err.code !== 'ENOENT') {
       try {
-        fs.copyFileSync(STORE_FILE, `${STORE_FILE}.broken-${Date.now()}`);
+        fs.copyFileSync(source, `${source}.broken-${Date.now()}`);
       } catch {}
       log(`store unreadable (${err.message}); kept a copy and starting fresh`);
     }
@@ -183,8 +197,15 @@ export function loadStore() {
   store = {
     accounts: Array.isArray(parsed && parsed.accounts) ? parsed.accounts : [],
     pinned: (parsed && parsed.pinned) || null,
+    // Kept on the record so the five-hour guard survives a restart; dropping it
+    // here silently reset the setting on every boot.
+    ...(parsed && parsed.rotation ? { rotation: parsed.rotation } : {}),
   };
   bootstrapNative();
+  if (source !== STORE_FILE) {
+    saveStore();
+    log(`accounts: moved the pool from ${source} to ${STORE_FILE}`);
+  }
   return store;
 }
 
@@ -252,11 +273,23 @@ const RETRYABLE = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAI
 /**
  * A stalled upstream used to sit silently forever: no headers, no error, nothing
  * in the log, and the client hung with it. Bound the wait for response headers so
- * a dead tier turns into a retry instead of a hang.
+ * a dead tier turns into a retry instead of a hang — and release the bound as soon
+ * as the headers arrive: the very same signal aborts the body too, so holding it
+ * for the whole call silently cut every answer that streamed longer than the
+ * budget.
  */
-function headerSignal(signal, timeoutMs = UPSTREAM_TIMEOUT_MS) {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+export async function withHeaderTimeout(start, signal, timeoutMs) {
+  if (!timeoutMs) return start(signal);
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException('upstream header timeout', 'TimeoutError')),
+    timeoutMs,
+  );
+  try {
+    return await start(signal ? AbortSignal.any([signal, controller.signal]) : controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function cloudPost(acc, pathname, body, { signal, retries = 2, timeoutMs } = {}) {
@@ -267,16 +300,21 @@ export async function cloudPost(acc, pathname, body, { signal, retries = 2, time
   // JSON parse on every upstream call, blocking the event loop mid-stream.
   const relay = String(readConfig().relay || '').replace(/\/$/, '');
   const call = (tok) =>
-    fetch((relay || API) + pathname, {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer ' + tok,
-        'content-type': 'application/json',
-        'user-agent': USER_AGENT,
-      },
-      body: JSON.stringify(body),
-      signal: headerSignal(signal, timeoutMs),
-    });
+    withHeaderTimeout(
+      (sig) =>
+        fetch((relay || API) + pathname, {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer ' + tok,
+            'content-type': 'application/json',
+            'user-agent': USER_AGENT,
+          },
+          body: JSON.stringify(body),
+          signal: sig,
+        }),
+      signal,
+      timeoutMs === undefined ? UPSTREAM_TIMEOUT_MS : timeoutMs,
+    );
 
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -469,9 +507,9 @@ export function primaryAccount() {
 
 // -------------------------------------------------------------- account CRUD
 
-export function listAccounts({ withQuota = false } = {}) {
+export function listAccounts() {
   const current = loadStore();
-  const base = current.accounts.map((acc) => ({
+  return current.accounts.map((acc) => ({
     id: acc.id,
     email: acc.email || acc.id,
     native: Boolean(acc.native),
@@ -484,8 +522,6 @@ export function listAccounts({ withQuota = false } = {}) {
     latency: latencies.get(acc.id) || null,
     requests: requestCounts.get(acc.id) || 0,
   }));
-  if (!withQuota) return base;
-  return base;
 }
 
 const quotaSummaryCache = new Map(); // accountId -> { at, value }
@@ -496,9 +532,9 @@ const QUOTA_SUMMARY_TTL = 60 * 1000;
 const EXHAUSTED_AT = Number(process.env.AG_EXHAUSTED_AT || 0.05);
 
 /** Cached grouped quota. Failures cache too, so a broken account cannot slow the whole panel. */
-async function quotaSummary(acc) {
+async function quotaSummary(acc, { force = false } = {}) {
   const cached = quotaSummaryCache.get(acc.id);
-  if (cached && Date.now() - cached.at < QUOTA_SUMMARY_TTL) return cached.value;
+  if (!force && cached && Date.now() - cached.at < QUOTA_SUMMARY_TTL) return cached.value;
   try {
     const token = await accountToken(acc);
     const value = await fetchQuotaSummary({ token, project: acc.project });
@@ -549,7 +585,7 @@ export async function limitsReport({ force = false } = {}) {
         row.models = quota.models;
         row.at = quota.at;
         // Grouped windows (5h + weekly) live behind a separate endpoint and are optional.
-        const [, summary] = await Promise.allSettled([null, quotaSummary(acc)]);
+        const [, summary] = await Promise.allSettled([null, quotaSummary(acc, { force })]);
         const summaryValue = summary.status === 'fulfilled' ? summary.value : null;
         row.groups = summaryValue ? summaryValue.groups : null;
         row.groupsAt = summaryValue ? summaryValue.at : null;

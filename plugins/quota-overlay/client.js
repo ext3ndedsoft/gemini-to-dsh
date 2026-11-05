@@ -11,6 +11,9 @@ window.__ModuleLoader__.load({
 		const BRIDGE = "http://127.0.0.1:8787";
 		const EGRESS = "http://127.0.0.1:8789";
 		const QUOTA_MS = 30000;
+		// The pill lives on screen all day; the closed panel is the normal state, not
+		// a reason to ask the bridge for fresh quotas every thirty seconds.
+		const PILL_MS = 180000;
 		const EGRESS_MS = 8000;
 		const OPEN_KEY = "ag-limits:open";
 		const MODE_KEY = "ag-limits:mode";
@@ -249,7 +252,7 @@ window.__ModuleLoader__.load({
 
 		/* ---------------------------------------------------------------- hooks */
 
-		function useLimits() {
+		function useLimits(open = false) {
 			const [data, setData] = React.useState(null);
 			const [error, setError] = React.useState(null);
 			const [loading, setLoading] = React.useState(false);
@@ -273,12 +276,12 @@ window.__ModuleLoader__.load({
 				load(false);
 				const timer = setInterval(() => {
 					if (alive && typeof document !== "undefined" && document.visibilityState !== "hidden") load(false);
-				}, QUOTA_MS);
+				}, open ? QUOTA_MS : PILL_MS);
 				return () => {
 					alive = false;
 					clearInterval(timer);
 				};
-			}, [load]);
+			}, [load, open]);
 
 			return { data, error, loading, load };
 		}
@@ -824,14 +827,14 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function AccountCard({ account, pinned, onSwitch, onCheck, onRemove, checking, index = 0 }) {
+		function AccountCard({ account, pinned, onSwitch, onCheck, onRemove, onNote, checking, index = 0 }) {
 			// Deleting a login is not undoable, so it takes two clicks: the glyph turns
 			// into the question, and the question defuses itself after a few seconds.
 			const [confirming, setConfirming] = React.useState(false);
 			const [removing, setRemoving] = React.useState(false);
 			const askRemove = () => {
 				if (account.native) {
-					setNote("аккаунт сессии удалить нельзя — это твой вход");
+					onNote && onNote("аккаунт сессии удалить нельзя — это твой вход");
 					return;
 				}
 				if (!confirming) {
@@ -939,7 +942,7 @@ window.__ModuleLoader__.load({
 			});
 			const [busy, setBusy] = React.useState(false);
 			const [note, setNote] = React.useState("");
-			const { data, error, loading, load } = useLimits();
+			const { data, error, loading, load } = useLimits(open);
 			const egress = useEgress();
 
 			const accounts = (data && data.accounts) || [];
@@ -1016,13 +1019,17 @@ window.__ModuleLoader__.load({
 				setBusy(true);
 				setNote("asking the model…");
 				try {
-					const res = await getJson(BRIDGE + "/v1/chat/completions", {
+					// The loopback /api/v1 path is not token-guarded, so the panel can test the
+					// route without shipping the bridge secret into a browser bundle.
+					const res = await getJson(BRIDGE + "/api/v1/chat/completions", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
 						body: JSON.stringify({
 							model: "gemini-3.8-flash",
 							messages: [{ role: "user", content: "ping" }],
-							max_tokens: 8,
+							// Eight tokens leave no room for thinking; the tiny-window guard in
+							// thinkingConfig turns thinking off, but 64 keeps a full word safe.
+							max_tokens: 64,
 							stream: false
 						}),
 						signal: AbortSignal.timeout(120000)
@@ -1243,6 +1250,7 @@ h(Transport, {
 												onSwitch: switchAccount,
 							onCheck: checkAccount,
 							onRemove: removeAccount,
+							onNote: setNote,
 							checking: checking === account.id
 											})
 										)

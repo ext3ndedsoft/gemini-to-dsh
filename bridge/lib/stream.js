@@ -14,7 +14,7 @@
 import { DEFAULT_MODEL, log } from './config.js';
 import { chunkId, errorStatus, openAiError, sseHead, upstreamErrorText, usagePayload } from './http.js';
 import { Pacer } from './pacer.js';
-import { newCallId, rememberCall } from './signatures.js';
+import { newCallId, rememberCall, flushSignatures } from './signatures.js';
 import { ThinkingStream } from './thinking.js';
 import { recordLatency } from '../accounts.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
@@ -32,7 +32,10 @@ export function retryBody(body, attempt) {
 
 export async function handleStream(req, res, body) {
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  // 'close' on the request fires the moment the body has been read — long before
+  // the answer exists — so it used to cancel nothing. The response is the object
+  // that actually outlives the turn.
+  res.on('close', () => controller.abort());
 
   const id = chunkId();
   const created = Math.floor(Date.now() / 1000);
@@ -43,6 +46,8 @@ export async function handleStream(req, res, body) {
   let finish = null;
   let usage = null;
   let wrote = false;
+  /** The upstream body died mid-answer: the turn is incomplete, not finished. */
+  let interrupted = false;
 
   const emit = (delta, finishReason = null) => {
     sseHead(res);
@@ -70,7 +75,7 @@ export async function handleStream(req, res, body) {
     emit({ content: text });
   });
   // A vanished client must not leave a timer writing into a dead response.
-  req.on('close', () => pacer.stop());
+  res.on('close', () => pacer.stop());
 
   const emitContent = (text) => {
     if (!text) return;
@@ -175,8 +180,9 @@ export async function handleStream(req, res, body) {
       }
     } catch (err) {
       if (controller.signal.aborted) return;
-      log('stream aborted: ' + err.message);
+      log('stream interrupted: ' + err.message);
       failed = true;
+      interrupted = true;
     }
 
     for (const piece of splitter.flush()) {
@@ -197,9 +203,39 @@ export async function handleStream(req, res, body) {
   // Nothing may still be queued when the closing chunk goes out, or the tail of
   // the answer would arrive after finish_reason and be dropped by the client.
   pacer.flush();
+  flushSignatures();
 
   if (!wrote) {
+    if (interrupted) {
+      return openAiError(
+        res,
+        502,
+        'upstream stream was interrupted before any answer',
+        'stream_interrupted'
+      );
+    }
     return openAiError(res, 502, 'upstream returned an empty answer', 'empty_upstream_response');
+  }
+
+  if (interrupted) {
+    // Half an answer is not an answer: say so, instead of ending the turn with
+    // finish_reason "stop" and letting the client store a cut sentence as final.
+    log(`stream interrupted after ${counters.content} answer chars; reporting it to the client`);
+    sseHead(res);
+    res.write(
+      'data: ' +
+        JSON.stringify({
+          error: {
+            message: 'upstream stream was interrupted; the answer above is incomplete',
+            type: 'stream_interrupted',
+            code: 'stream_interrupted',
+          },
+        }) +
+        '\n\n'
+    );
+    res.write('data: [DONE]\n\n');
+    res.end();
+    return;
   }
 
   // A truncated turn is a truncated turn even when what survived looks like a tool

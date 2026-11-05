@@ -154,7 +154,11 @@ function normalizeConfig(raw, { fresh = false } = {}) {
 	const config = { ...DEFAULT_CONFIG, ...raw };
 	const providers = { ...DEFAULT_CONFIG.providers };
 	for (const [name, spec] of Object.entries(raw.providers || {})) {
-		providers[name] = { dns: Array.isArray(spec?.dns) ? spec.dns : [], ...spec };
+		// `null` is how the panel removes a channel. Keeping it would resurrect the
+		// name as an empty provider, so the chip never went away and `route` could
+		// still point at a channel with no DNS servers.
+		if (!spec) continue;
+		providers[name] = { dns: Array.isArray(spec.dns) ? spec.dns : [], ...spec };
 	}
 	// Legacy files predate channels: they configured one proxy plus an optional
 	// GeoHide fallback. Their behaviour is reproduced exactly — a chain that never
@@ -423,19 +427,35 @@ async function connectSocks5(proxy, host, port, timeout) {
 	// one TCP segment, and dropping those bytes stalls the handshake.
 	let pending = Buffer.alloc(0);
 	let wake = null;
+	let failure = null;
+	const wakeUp = () => {
+		if (!wake) return;
+		const resume = wake;
+		wake = null;
+		resume();
+	};
 	const onData = (chunk) => {
 		pending = Buffer.concat([pending, chunk]);
-		if (wake) {
-			const resume = wake;
-			wake = null;
-			resume();
-		}
+		wakeUp();
 	};
+	// A proxy that accepts the TCP connection and then closes it used to leave
+	// read() waiting for a wake that never came: the CONNECT hung until the client
+	// gave up, and the next channel in the chain was never tried.
+	const onFail = (error) => {
+		failure = error instanceof Error ? error : new Error('socks5 proxy connection failed');
+		wakeUp();
+	};
+	const onClose = () => onFail(new Error('socks5 proxy closed the connection during the handshake'));
 	socket.on('data', onData);
+	socket.once('error', onFail);
+	socket.once('close', onClose);
 	socket.setTimeout(timeout, () => socket.destroy(new Error('socks5 handshake timeout')));
 
 	const read = async (size) => {
-		while (pending.length < size) await new Promise((resolve) => (wake = resolve));
+		while (pending.length < size) {
+			if (failure) throw failure;
+			await new Promise((resolve) => (wake = resolve));
+		}
 		const out = pending.subarray(0, size);
 		pending = pending.subarray(size);
 		return Buffer.from(out);
@@ -443,6 +463,8 @@ async function connectSocks5(proxy, host, port, timeout) {
 
 	const finish = () => {
 		socket.off('data', onData);
+		socket.off('close', onClose);
+		socket.off('error', onFail);
 		socket.setTimeout(0);
 		if (pending.length) socket.unshift(pending);
 		pending = Buffer.alloc(0);
@@ -475,6 +497,8 @@ async function connectSocks5(proxy, host, port, timeout) {
 		return socket;
 	} catch (error) {
 		socket.off('data', onData);
+		socket.off('close', onClose);
+		socket.off('error', onFail);
 		socket.destroy();
 		throw error;
 	}
@@ -894,7 +918,9 @@ export function startNetworkWatch({ log = () => {}, intervalMs = Number(process.
 }
 
 export function startEgress({ log = () => {}, port = 0 } = {}) {
-	startVpnWatch();
+	// Only VPN mode needs the adapters watched closely; every other mode gets a
+	// slow snapshot instead of a PowerShell process every 15 seconds.
+	startVpnWatch(() => readConfig().mode === 'vpn');
 	const networkWatch = startNetworkWatch({ log });
 	readConfig(true); // a fresh shim never starts on a stale cached config
 	const stats = { total: 0, proxied: 0, direct: 0, failed: 0, lastError: null, lastRoute: null, lastHost: null, lastAt: null };
@@ -1162,18 +1188,24 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 						send(400, { ok: false, error: 'providers must be an object of { name: { dns: [ip, ...] } }' });
 						return;
 					}
+					// The patch only carries the channels it mentions, so it is merged into
+					// the live map: a flat write used to drop every other custom channel,
+					// and editing one channel silently erased the rest.
+					const merged = { ...readConfig().providers };
 					for (const [name, spec] of Object.entries(patch.providers)) {
-				// A null spec removes the channel: a custom DNS the user typed once should be
-				// removable from the same panel it was added in.
-				if (spec === null) {
-					delete config.providers[name];
-					continue;
-				}
+						// A null spec removes the channel: a custom DNS the user typed once
+						// should be removable from the same panel it was added in.
+						if (spec === null) {
+							delete merged[name];
+							continue;
+						}
 						if (!Array.isArray(spec?.dns) || !spec.dns.length) {
 							send(400, { ok: false, error: `provider ${name} needs a non-empty dns array` });
 							return;
 						}
+						merged[name] = { ...merged[name], ...spec };
 					}
+					patch.providers = merged;
 				}
 				writeConfig(patch);
 				const updated = readConfig();

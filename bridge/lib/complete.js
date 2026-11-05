@@ -5,7 +5,7 @@
 
 import { DEFAULT_MODEL, log } from './config.js';
 import { chunkId, errorStatus, openAiError, sendJson, upstreamErrorText, usagePayload } from './http.js';
-import { newCallId, rememberCall } from './signatures.js';
+import { newCallId, rememberCall, flushSignatures } from './signatures.js';
 import { MAX_ATTEMPTS, retryBody } from './stream.js';
 import { splitThinking } from './thinking.js';
 import { recordLatency } from '../accounts.js';
@@ -13,20 +13,32 @@ import { parseSseJson, readSse, upstream } from './upstream.js';
 
 export async function handleOnce(req, res, body) {
   const model = body.model || DEFAULT_MODEL;
+  // A cancelled client must not keep paying for the upstream call. 'close' on the
+  // request fires as soon as the body has been read, so the response is the object
+  // that actually lives for the length of the turn.
+  const controller = new AbortController();
+  res.on('close', () => controller.abort());
   let text = '';
   let reasoning = '';
   const toolCalls = [];
   let finish = 'STOP';
   let usage = null;
+  /** An upstream body that died mid-answer: retried, and named in the final error. */
+  let interrupted = false;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const prepared = retryBody(body, attempt);
     const suppressReasoning = Boolean(prepared.__suppressReasoning);
+    // Each attempt reports its own numbers: a retry must not inherit the usage or
+    // the finish reason of the attempt that answered nothing.
+    usage = null;
+    finish = 'STOP';
 
     let upstreamRes;
     try {
-      upstreamRes = await upstream(prepared);
+      upstreamRes = await upstream(prepared, controller.signal);
     } catch (err) {
+      if (controller.signal.aborted) return;
       return openAiError(res, 502, 'upstream request failed: ' + err.message);
     }
 
@@ -50,38 +62,51 @@ export async function handleOnce(req, res, body) {
     let timed = false;
     toolCalls.length = 0;
 
-    for await (const payload of readSse(upstreamRes.body)) {
-      if (!timed && upstreamRes.__agAccount) {
-        timed = true;
-        recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
-      }
-      const response = parseSseJson(payload);
-      if (!response) continue;
-      if (response.usageMetadata) usage = response.usageMetadata;
-      const candidate = response.candidates && response.candidates[0];
-      if (!candidate) continue;
-      if (candidate.finishReason) finish = candidate.finishReason;
+    try {
+      for await (const payload of readSse(upstreamRes.body)) {
+        if (!timed && upstreamRes.__agAccount) {
+          timed = true;
+          recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
+        }
+        const response = parseSseJson(payload);
+        if (!response) continue;
+        if (response.usageMetadata) usage = response.usageMetadata;
+        const candidate = response.candidates && response.candidates[0];
+        if (!candidate) continue;
+        if (candidate.finishReason) finish = candidate.finishReason;
 
-      for (const part of (candidate.content && candidate.content.parts) || []) {
-        if (part.functionCall) {
-          const callId = part.functionCall.id || newCallId();
-          rememberCall(callId, part.thoughtSignature, part.functionCall.name);
-          toolCalls.push({
-            id: callId,
-            type: 'function',
-            function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) },
-          });
-          continue;
+        for (const part of (candidate.content && candidate.content.parts) || []) {
+          if (part.functionCall) {
+            const callId = part.functionCall.id || newCallId();
+            rememberCall(callId, part.thoughtSignature, part.functionCall.name);
+            toolCalls.push({
+              id: callId,
+              type: 'function',
+              function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) },
+            });
+            continue;
+          }
+          if (typeof part.text !== 'string') continue;
+          if (part.thought === true) {
+            if (!suppressReasoning && part.text.trim()) reasoning += part.text;
+            continue;
+          }
+          const split = splitThinking(part.text);
+          text += split.content;
+          if (split.reasoning && !suppressReasoning) reasoning += split.reasoning;
         }
-        if (typeof part.text !== 'string') continue;
-        if (part.thought === true) {
-          if (!suppressReasoning && part.text.trim()) reasoning += part.text;
-          continue;
-        }
-        const split = splitThinking(part.text);
-        text += split.content;
-        if (split.reasoning && !suppressReasoning) reasoning += split.reasoning;
       }
+    } catch (err) {
+      // Nothing has been sent to the client yet, so a half-read body is thrown away
+      // and the attempt is retried instead of being reported as an answer.
+      if (controller.signal.aborted) return;
+      log('stream interrupted: ' + err.message);
+      interrupted = true;
+      text = '';
+      reasoning = '';
+      toolCalls.length = 0;
+      if (attempt === MAX_ATTEMPTS - 1) break;
+      continue;
     }
 
     if (text || toolCalls.length) break;
@@ -90,8 +115,15 @@ export async function handleOnce(req, res, body) {
   }
 
   if (!text && !toolCalls.length) {
-    return openAiError(res, 502, 'upstream returned an empty answer', 'empty_upstream_response');
+    return openAiError(
+      res,
+      502,
+      interrupted ? 'upstream stream was interrupted before any answer' : 'upstream returned an empty answer',
+      interrupted ? 'stream_interrupted' : 'empty_upstream_response'
+    );
   }
+
+  flushSignatures();
 
   sendJson(res, 200, {
     id: chunkId(),

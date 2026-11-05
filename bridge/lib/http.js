@@ -27,6 +27,9 @@ export function jsonBody(req) {
 }
 
 export function sendJson(res, status, payload) {
+  // The client may have walked away while the answer was being prepared; writing
+  // into a dead response throws where a silent return is the honest behaviour.
+  if (res.destroyed || res.writableEnded) return;
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',

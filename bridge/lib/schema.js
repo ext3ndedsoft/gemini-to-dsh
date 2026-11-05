@@ -167,6 +167,9 @@ export function thinkingConfig(effort, maxTokens, mode) {
   if (mode === 'minimal') return { thinkingBudget: THINKING_BUDGETS.minimal, includeThoughts: false };
 
   const cap = typeof maxTokens === 'number' ? maxTokens : 32768;
+  // Thinking and the answer share one window: a 32-token probe with a 256-token
+  // thought comes back empty, so a tiny window gets no thinking at all.
+  if (cap < 1024) return { thinkingBudget: 0, includeThoughts: true };
   const room = Math.max(256, cap - 1024);
   const key = String(effort || '').toLowerCase();
   const budget = Math.min(THINKING_BUDGETS[key] || THINKING_BUDGETS.medium, room);

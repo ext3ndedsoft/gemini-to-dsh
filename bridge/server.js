@@ -73,7 +73,7 @@ async function handleModels(res) {
       context_window: meta.maxTokens || 1_048_576,
       max_output_tokens: meta.maxOutputTokens || 65_536,
       architecture: {
-        input_modalities: ['text'],
+        input_modalities: ['text', 'image'],
         output_modalities: ['text'],
       },
       pricing: {
@@ -94,7 +94,7 @@ async function handleModels(res) {
       context_window: meta.maxTokens || 1_048_576,
       max_output_tokens: meta.maxOutputTokens || 65_536,
       architecture: {
-        input_modalities: ['text'],
+        input_modalities: ['text', 'image'],
         output_modalities: ['text'],
       },
       pricing: {
@@ -248,7 +248,9 @@ async function handleAccountRoutes(req, res, url) {
  */
 async function handleImage(req, res, body, mode) {
   const controller = new AbortController();
-  req.on('close', () => controller.abort());
+  // As everywhere else: the request is already read, so only the response can
+  // report that the client went away.
+  res.on('close', () => controller.abort());
 
   let result;
   try {
@@ -383,11 +385,16 @@ const server = http.createServer(async (req, res) => {
       return openAiError(res, 400, 'messages must be an array');
     }
     try {
-      // What actually fills the prompt: tool schemas are the usual suspect, and
-      // without this line the only place to see their weight is the client UI.
-      const toolChars = Array.isArray(body.tools) ? JSON.stringify(body.tools).length : 0;
-      const messageChars = JSON.stringify(body.messages).length;
-      log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
+      // What actually fills the prompt: tool schemas are the usual suspect. The
+      // full shape costs two serialisations of a body that can be megabytes, so it
+      // is opt-in; the cheap counts are always there.
+      if (process.env.AG_DEBUG === '1') {
+        const toolChars = Array.isArray(body.tools) ? JSON.stringify(body.tools).length : 0;
+        const messageChars = JSON.stringify(body.messages).length;
+        log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
+      } else {
+        log(`turn: model=${body.model} tools=${body.tools?.length || 0} messages=${body.messages.length} stream=${body.stream ? 'yes' : 'no'}`);
+      }
       // Asking any model for a picture lands on the image model: words, not a command.
       const imageRoute = routeFor(body);
       if (imageRoute) return await handleImage(req, res, body, imageRoute);
@@ -414,6 +421,17 @@ if (WARM_MS > 0) {
   setTimeout(warm, 8_000).unref?.();
   setInterval(warm, WARM_MS).unref?.();
 }
+
+// Starting twice is the normal accident here (the DSH supervisor, the logon task
+// and start.cmd all launch the same file); a stack trace for it is noise.
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    log(`port ${PORT} is already taken — another bridge is running, this one stops here`);
+    process.exit(0);
+  }
+  log('server error: ' + err.message);
+  process.exit(1);
+});
 
 server.listen(PORT, HOST, () => {
   log(`antigravity-bridge listening on http://${HOST}:${PORT}`);

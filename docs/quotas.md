@@ -112,7 +112,7 @@ being promoted once its five-hour window is at or below the threshold, and the r
 whoever has more room.
 
 That is the whole point of the switch: if Google's numbers look wrong for your accounts, turn
-the guard off and keep the pin. State lives in `~/.dsh/profiles/web/plugins/ag-limits/accounts.json`
+the guard off and keep the pin. State lives in `~/.gemini/dsh-bridge/accounts.json`
 under `rotation`, so it survives restarts and needs no environment variable.
 
 ## In the response

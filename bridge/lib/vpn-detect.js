@@ -16,6 +16,8 @@ const TUNNEL_HINTS =
   /wireguard|openvpn|tap-windows|wintun|tailscale|nordlynx|proton|mullvad|surfshark|expressvpn|globalprotect|anyconnect|fortinet|cisco|softether|tunnel|vpn/i;
 
 const REFRESH_MS = Number(process.env.AG_VPN_REFRESH_MS || 15000);
+/** Every other mode only needs a snapshot that is not ancient: this spawns PowerShell. */
+const IDLE_REFRESH_MS = Number(process.env.AG_VPN_IDLE_REFRESH_MS || 120000);
 
 const SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
@@ -103,10 +105,21 @@ async function refresh() {
   }
 }
 
-export function startVpnWatch() {
+/**
+ * `isActive` says whether the selected mode actually depends on the tunnel. A
+ * machine that runs in DNS mode all day used to spawn PowerShell ~5760 times a
+ * day for a flag nobody was looking at, so the idle path is a slow heartbeat.
+ */
+export function startVpnWatch(isActive = () => true) {
   if (timer) return;
   refresh();
-  timer = setInterval(refresh, Math.max(3000, REFRESH_MS));
+  const tick = () => {
+    refresh();
+    const wait = isActive() ? Math.max(3000, REFRESH_MS) : Math.max(30000, IDLE_REFRESH_MS);
+    timer = setTimeout(tick, wait);
+    if (timer.unref) timer.unref();
+  };
+  timer = setTimeout(tick, Math.max(3000, REFRESH_MS));
   if (timer.unref) timer.unref();
 }
 

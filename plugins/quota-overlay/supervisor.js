@@ -8,7 +8,7 @@
  * instead of duplicated — the port is the lock.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -126,19 +126,38 @@ export async function ensureTunnel(log = () => {}) {
 		return { port, up: false, skipped: false };
 	}
 	log(`tunnel: proxy 127.0.0.1:${port} is silent, asking WARP to reconnect`);
-	const run = (...args) => {
-		try {
-			const res = spawnSync(warp, args, { timeout: 20000, windowsHide: true, encoding: "utf8" });
-			return `${res.stdout || ""}${res.stderr || ""}`.trim();
-		} catch (error) {
-			return `spawn failed: ${error.message}`;
-		}
-	};
-	run("connect");
+	const run = (...args) =>
+		new Promise((resolve) => {
+			let proc;
+			try {
+				proc = spawn(warp, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+			} catch (error) {
+				resolve(`spawn failed: ${error.message}`);
+				return;
+			}
+			let out = "";
+			const timer = setTimeout(() => {
+				out += "\n(timed out)";
+				proc.kill();
+			}, 20000);
+			proc.stdout.on("data", (chunk) => (out += chunk));
+			proc.stderr.on("data", (chunk) => (out += chunk));
+			proc.on("error", (error) => {
+				clearTimeout(timer);
+				resolve(`spawn failed: ${error.message}`);
+			});
+			proc.on("close", () => {
+				clearTimeout(timer);
+				resolve(out.trim());
+			});
+		});
+	// Spawned, not spawned synchronously: warp-cli can take twenty seconds, and a
+	// spawnSync here froze the whole DSH event loop (the GUI included) for that long.
+	await run("connect");
 	if (await waitForPort(port, 8)) return { port, up: true, skipped: false };
-	const mode = run("mode", "proxy");
-	run("proxy", "port", String(port));
-	run("connect");
+	const mode = await run("mode", "proxy");
+	await run("proxy", "port", String(port));
+	await run("connect");
 	const up = await waitForPort(port, 10);
 	log(`tunnel: ${up ? "recovered" : `still down after reconnect (${mode.split("\n")[0] || "mode proxy"})`}`);
 	return { port, up, skipped: false };
@@ -149,9 +168,12 @@ export function superviseBridge(log = () => {}) {
 	let child = null;
 	let stopped = false;
 	let restarts = 0;
+	let restartTimer = null;
+	let startedAt = 0;
 
 	const launch = () => {
 		if (stopped) return;
+		restartTimer = null;
 		const script = path.join(DIR, "bridge.js");
 		if (!fs.existsSync(script)) {
 			log(`bridge: ${script} not found, not starting`);
@@ -167,11 +189,13 @@ export function superviseBridge(log = () => {}) {
 			return;
 		}
 		try {
-			child = spawn(process.execPath, ["bridge.js"], {				cwd: DIR,
+			child = spawn(process.execPath, ["bridge.js"], {
+				cwd: DIR,
 				windowsHide: true,
 				stdio: ["ignore", out, err],
 				env: { ...process.env, AG_BRIDGE_PORT: String(portOf(BRIDGE_URL)) }
 			});
+			startedAt = Date.now();
 		} finally {
 			fs.closeSync(out);
 			fs.closeSync(err);
@@ -180,6 +204,9 @@ export function superviseBridge(log = () => {}) {
 		child.on("exit", (code, signal) => {
 			child = null;
 			if (stopped) return;
+			// A crash loop is not the same as one bad boot; a process that stayed up
+			// for ten minutes earns a fresh budget instead of hitting the cap forever.
+			if (Date.now() - startedAt > 10 * 60_000) restarts = 0;
 			restarts += 1;
 			if (restarts > MAX_RESTARTS) {
 				log(`bridge: exited (${code ?? signal}) and hit the restart cap`);
@@ -187,7 +214,7 @@ export function superviseBridge(log = () => {}) {
 			}
 			const delay = Math.min(30000, 1000 * restarts);
 			log(`bridge: exited (${code ?? signal}), restart ${restarts} in ${delay}ms`);
-			setTimeout(launch, delay);
+			restartTimer = setTimeout(launch, delay);
 		});
 		child.on("error", (error) => log(`bridge: spawn failed: ${error.message}`));
 	};
@@ -210,11 +237,22 @@ export function superviseBridge(log = () => {}) {
 	const tunnelTimer = setInterval(() => {
 		if (stopped) return;
 		ensureTunnel(log).catch(() => {});
+		// An adopted instance has no child handle, so its death used to be invisible:
+		// the supervisor only watched the processes it had spawned itself.
+		if (!child && !restartTimer) {
+			healthy().then((up) => {
+				if (!stopped && !up) {
+					log("bridge: the adopted instance is gone, taking over");
+					launch();
+				}
+			});
+		}
 	}, TUNNEL_CHECK_MS);
 
 	return () => {
 		stopped = true;
 		clearInterval(tunnelTimer);
+		if (restartTimer) clearTimeout(restartTimer);
 		if (child) {
 			log(`bridge: stopping pid ${child.pid}`);
 			// The bridge is a launcher with the actual server as its own child, so

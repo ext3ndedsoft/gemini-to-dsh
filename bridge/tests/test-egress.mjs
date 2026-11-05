@@ -297,7 +297,7 @@ check('mask hides credentials', egress.maskProxy('http://user:secret@1.2.3.4:808
 
 	const checked = await ask('/check?proxy=' + encodeURIComponent('http://127.0.0.1:1'));
 	check('proxy: check reports a dead address instead of throwing', checked.status === 200, `status ${checked.status}`);
-	const checkedBody = JSON.parse(await checked.text());
+	const checkedBody = JSON.parse(checked.body);
 	check('proxy: check says not ok for a closed port', checkedBody.ok === false, JSON.stringify(checkedBody).slice(0, 80));
 
 	// /watchdog runs a probe and /bench opens connections: neither is a read, so a

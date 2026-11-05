@@ -84,9 +84,12 @@ export async function upstream(body, signal) {
   }
 
   let last = null;
+  // Assembled once: the body does not depend on the account, only the project id
+  // does, and rebuilding it per candidate re-ran the schema/persona conversion for
+  // every rotation and retry.
+  const payload = buildRequest(body);
   for (let index = 0; index < candidates.length; index += 1) {
     const account = candidates[index];
-    const payload = buildRequest(body);
     payload.project = (await getProject(account)) || DEFAULT_PROJECT;
 
     let res;
@@ -124,14 +127,32 @@ export async function upstream(body, signal) {
   return last;
 }
 
+/**
+ * A stream that goes quiet mid-answer is dead, not slow. The header bound ends
+ * where the answer starts, so the body guards itself: this is the budget for the
+ * gap between two payloads, not for the whole turn.
+ */
+const STREAM_IDLE_MS = Number(process.env.AG_STREAM_IDLE_MS || 90_000);
+
+function readWithIdle(reader, idleMs) {
+  let timer;
+  const idle = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new DOMException('upstream stream idle timeout', 'TimeoutError')),
+      idleMs,
+    );
+  });
+  return Promise.race([reader.read(), idle]).finally(() => clearTimeout(timer));
+}
+
 /** Iterate the `data:` payloads of an SSE body. */
-export async function* readSse(body) {
+export async function* readSse(body, idleMs = STREAM_IDLE_MS) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = idleMs ? await readWithIdle(reader, idleMs) : await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       let index;
@@ -145,6 +166,13 @@ export async function* readSse(body) {
     const tail = ssePayload(buffer.trim());
     if (tail !== null) yield tail;
   } finally {
+    // Whoever stops reading early (idle timeout, client gone) must hand the
+    // connection back instead of leaving a half-read body open.
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
     try {
       reader.releaseLock();
     } catch {

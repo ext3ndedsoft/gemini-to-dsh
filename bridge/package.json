@@ -6,8 +6,9 @@
   "main": "bridge.js",
   "scripts": {
     "start": "node bridge.js",
-    "test": "node tests/test-bridge.mjs && node tests/test-images.mjs && node tests/test-modes.mjs && node tests/test-egress.mjs && node tests/test-integration.mjs",
-    "test:unit": "node tests/test-bridge.mjs && node tests/test-images.mjs && node tests/test-modes.mjs",
+    "test": "node tests/test-bridge.mjs && node tests/test-images.mjs && node tests/test-modes.mjs && node tests/test-fixes.mjs && node tests/test-egress.mjs && node tests/test-integration.mjs",
+    "test:unit": "node tests/test-bridge.mjs && node tests/test-images.mjs && node tests/test-modes.mjs && node tests/test-fixes.mjs",
+    "test:fixes": "node tests/test-fixes.mjs",
     "test:egress": "node tests/test-egress.mjs",
     "test:integration": "node tests/test-integration.mjs",
     "test:proxy": "node tests/test-envproxy.mjs",

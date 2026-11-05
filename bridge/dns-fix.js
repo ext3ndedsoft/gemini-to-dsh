@@ -21,7 +21,8 @@ const DOH = [
 ];
 
 const cache = new Map();
-const inFlight = new Set();
+/** hostname -> in-flight DoH lookup. */
+const inFlight = new Map();
 const original = dns.lookup.bind(dns);
 
 async function resolveViaDoh(hostname) {
@@ -48,8 +49,12 @@ async function resolveViaDoh(hostname) {
 }
 
 function reply(callback, options, address) {
-  if (options && options.all) return callback(null, [{ address, family: 4 }]);
-  return callback(null, address, 4);
+  // dns.lookup has to answer asynchronously: a cache hit used to call back in the
+  // same tick, which re-enters net.connect from inside its own lookup call.
+  process.nextTick(() => {
+    if (options && options.all) callback(null, [{ address, family: 4 }]);
+    else callback(null, address, 4);
+  });
 }
 
 if (ENABLED) {
@@ -68,18 +73,22 @@ if (ENABLED) {
     if (cached && Date.now() - cached.at < TTL) return reply(done, opts, cached.address);
 
     return original(hostname, options, (err, address, family) => {
-      if (!err || err.code !== 'ENOTFOUND' || inFlight.has(hostname)) return done(err, address, family);
-      inFlight.add(hostname);
-      resolveViaDoh(hostname)
+      // The fallback only knows IPv4 answers, so an explicit AAAA request is left alone.
+      if (!err || err.code !== 'ENOTFOUND' || opts.family === 6) return done(err, address, family);
+      // A cold start resolves the same host from several sockets at once. They share
+      // one DoH round trip; before, the later ones were handed ENOTFOUND while the
+      // first was still waiting for the answer.
+      let pending = inFlight.get(hostname);
+      if (!pending) {
+        pending = resolveViaDoh(hostname).finally(() => inFlight.delete(hostname));
+        inFlight.set(hostname, pending);
+      }
+      pending
         .then((resolved) => {
-          inFlight.delete(hostname);
           if (resolved) return reply(done, opts, resolved);
           return done(err, address, family);
         })
-        .catch(() => {
-          inFlight.delete(hostname);
-          done(err, address, family);
-        });
+        .catch(() => done(err, address, family));
     });
   };
 }
