@@ -3,7 +3,7 @@
  * calls the bridge exposes (/v1/models and the project id).
  */
 
-import {
+import { noteRequest,
   accountMeta,
   accountModels,
   cloudPost,
@@ -91,6 +91,7 @@ export async function upstream(body, signal) {
 
     let res;
     const startedAt = Date.now();
+    noteRequest(account);
     try {
       res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, { signal });
     } catch (err) {

@@ -82,6 +82,8 @@ const modelsCache = new Map();
 const cooldowns = new Map();
 /** @type {Map<string, {ms:number, at:number}>} last measured time-to-first-token */
 const latencies = new Map();
+/** @type {Map<string, number>} upstream requests sent per account, since start */
+const requestCounts = new Map();
 /** @type {Map<string, Promise<any>>} */
 const refreshing = new Map();
 /** @type {Map<string, {verifier:string, at:number}>} */
@@ -427,6 +429,12 @@ export function recordLatency(acc, ms) {
   latencies.set(acc.id, { ms: Math.round(ms), at: Date.now() });
 }
 
+/** Every upstream call costs quota, including the ones that end badly. */
+export function noteRequest(acc) {
+  if (!acc) return;
+  requestCounts.set(acc.id, (requestCounts.get(acc.id) || 0) + 1);
+}
+
 export function latencyOf(id) {
   return latencies.get(id) || null;
 }
@@ -473,6 +481,7 @@ export function listAccounts({ withQuota = false } = {}) {
     tierName: acc.tierName || null,
     hasToken: Boolean(acc.refresh_token),
     latency: latencies.get(acc.id) || null,
+    requests: requestCounts.get(acc.id) || 0,
   }));
   if (!withQuota) return base;
   return base;
@@ -528,6 +537,7 @@ export async function limitsReport({ force = false } = {}) {
         tier: acc.tier || null,
         tierName: acc.tierName || null,
         latency: latencies.get(acc.id) || null,
+        requests: requestCounts.get(acc.id) || 0,
       };
       try {
         const quota = await accountQuota(acc, { force });

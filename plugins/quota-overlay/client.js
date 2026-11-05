@@ -131,6 +131,10 @@ window.__ModuleLoader__.load({
 .agq .card .lat .when{margin-right:auto;opacity:.8}
 .agq .card .lat .mini{opacity:.75}
 .agq .card .lat .mini:hover{opacity:1}
+.agq .card .del{margin-left:6px;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:13px;line-height:1;color:var(--muted);background:transparent;border:1px solid transparent;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.agq .card .del:hover{color:var(--bad);border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
+.agq .card .del.ask{width:auto;padding:0 7px;font-size:9.5px;letter-spacing:.04em;color:#ffd7d7;border-color:rgba(255,107,107,.5);background:rgba(255,107,107,.14)}
+.agq .card .lat .req{opacity:.55;font-variant-numeric:tabular-nums}
 .agq .card .here{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--b);opacity:.85}
 .agq .card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .agq .who{flex:1;min-width:0}
@@ -794,6 +798,7 @@ window.__ModuleLoader__.load({
 				h("span", null, "ответ"),
 				lat ? h("b", null, (lat.ms / 1000).toFixed(1) + " с") : h("b", { className: "none" }, "—"),
 				h("span", { className: "when" }, lat ? agoOf(lat.at) : "нет замера"),
+				account.requests ? h("span", { className: "req" }, account.requests + " запр.") : null,
 				h(
 					"button",
 					{
@@ -807,7 +812,25 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function AccountCard({ account, pinned, onSwitch, onCheck, checking, index = 0 }) {
+		function AccountCard({ account, pinned, onSwitch, onCheck, onRemove, checking, index = 0 }) {
+			// Deleting a login is not undoable, so it takes two clicks: the glyph turns
+			// into the question, and the question defuses itself after a few seconds.
+			const [confirming, setConfirming] = React.useState(false);
+			const [removing, setRemoving] = React.useState(false);
+			const askRemove = () => {
+				if (account.native) {
+					setNote("аккаунт сессии удалить нельзя — это твой вход");
+					return;
+				}
+				if (!confirming) {
+					setConfirming(true);
+					setTimeout(() => setConfirming(false), 4000);
+					return;
+				}
+				setRemoving(true);
+				setConfirming(false);
+				onRemove(account.id);
+			};
 			const groups = account.groups || [];
 			const models = Object.entries(account.models || {})
 				.filter(([id]) => KEEP_MODEL(id))
@@ -838,6 +861,17 @@ window.__ModuleLoader__.load({
 								},
 								"переключить"
 							)
+				),
+				h(
+					"button",
+					{
+						className: "del" + (confirming ? " ask" : ""),
+						onClick: askRemove,
+						disabled: removing,
+						title: account.native ? "аккаунт сессии удалить нельзя" : "удалить аккаунт",
+						"aria-label": "удалить аккаунт"
+					},
+					removing ? "…" : confirming ? "удалить?" : "×"
 				),
 				latencyLine(account, checking, onCheck),
 				!account.ok
@@ -991,6 +1025,22 @@ window.__ModuleLoader__.load({
 				load(true);
 			};
 
+			const removeAccount = async (id) => {
+				try {
+					const res = await fetch(BRIDGE + "/accounts/remove", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ id })
+					});
+					const json = await res.json().catch(() => ({}));
+					if (res.ok) setNote("аккаунт удалён");
+					else setNote(explainError(json.error && json.error.message ? json.error.message : "не удалось удалить") );
+				} catch {
+					setNote("мост не отвечает");
+				}
+				load(true);
+			};
+
 			const [checking, setChecking] = React.useState(null);
 			const checkAccount = async (id) => {
 				setChecking(id);
@@ -1084,6 +1134,7 @@ h(Transport, {
 												pinned: account.id === (data && data.pinned),
 												onSwitch: switchAccount,
 							onCheck: checkAccount,
+							onRemove: removeAccount,
 							checking: checking === account.id
 											})
 										)

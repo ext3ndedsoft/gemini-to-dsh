@@ -57,14 +57,14 @@ function group(name, weekly, five, reset) {
   </div>`;
 }
 
-function account({ email, tier, groups, models, pinned, latency, when }) {
+function account({ email, tier, groups, models, pinned, latency, when, requests }) {
   return `<div class="card">
     <div class="top">
       <span class="dot" style="background:${tone(71)}"></span>
       <div class="who"><b>${email}</b><span>${tier}${pinned ? ' · pinned' : ''}</span></div>
-      ${pinned ? '<span class="here">этот</span>' : '<button class="mini">переключить</button>'}
+      ${pinned ? '<span class="here">этот</span>' : '<button class="mini">переключить</button>'}<button class="del">×</button>
     </div>
-    <div class="lat"><span>ответ</span><b>${latency || '—'}</b><span class="when">${when || 'нет замера'}</span><button class="mini">проверить</button></div>
+    <div class="lat"><span>ответ</span><b>${latency || '—'}</b><span class="when">${when || 'нет замера'}</span><span class="req">${requests || ''}</span><button class="mini">проверить</button></div>
     ${groups.map((g) => group(g.name, g.weekly, g.five, g.reset || 'in 6d 22h')).join('')}
     <div class="rows">${models
       .map(
@@ -175,6 +175,7 @@ ${styles}
         pinned: true,
         latency: '2.9 с',
         when: '2 мин назад',
+        requests: '6 запр.',
         groups: [{ name: 'Gemini Models', weekly: 71, five: 99, reset: 'in 6d 22h' }],
         models: [{ id: 'gemini-3.8-flash-tiered', pct: 99, reset: 'in 3h 44m' }]
       })}
