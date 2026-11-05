@@ -23,7 +23,23 @@ then worry about transports.
 
 ---
 
-## 1. Put the bridge where the plugin expects it
+## 1. One command (or the manual route below)
+
+```bash
+git clone https://github.com/ext3ndedsoft/gemini-to-dsh.git
+cd gemini-to-dsh
+node install.mjs
+```
+
+That copies the bridge into `~/.dsh/bridge`, the panel into
+`~/.dsh/profiles/web/plugins/quota-overlay`, and appends the plugin entry to
+`~/.dsh/profiles/web/cordis.patch.yml` — without touching an entry that is already there.
+Safe to run twice. Flags: `--dry-run`, `--force`, `--bridge-only`, `--plugin-only`,
+`--dsh-home <dir>`, `--profile <name>`.
+
+If you would rather see what it does, steps 2–5 are the same thing by hand.
+
+## 2. Put the bridge where the plugin expects it
 
 The plugin looks for `bridge.js` in `~/.dsh/bridge` (`AG_BRIDGE_DIR` overrides it).
 
@@ -44,7 +60,7 @@ Copy-Item "gemini-to-dsh\bridge\*" "$HOME\.dsh\bridge\" -Recurse -Force
 That folder is the whole bridge: `bridge.js`, `server.js`, `egress.js`, `lib/`, `accounts.js`.
 Nothing to `npm install`.
 
-## 2. Give the bridge your Google credentials
+## 3. Give the bridge your Google credentials
 
 The bridge reuses the OAuth tokens that your subscription already created — it does not ask for
 a password and does not store one.
@@ -63,7 +79,7 @@ Refreshing those tokens needs an OAuth client, which is **not** shipped here. Pu
 or export `AG_CLIENT_ID` / `AG_CLIENT_SECRET`. The bridge starts fine without it until a token
 actually expires, then it will say so.
 
-## 3. Pick a transport
+## 4. Pick a transport
 
 If Google answers from your machine directly, skip this step entirely — the default chain will
 fall through to `direct` on its own.
@@ -79,7 +95,7 @@ If it does not, open `~/.dsh/ag-egress.json` (it is created on first start) and 
 Which one applies to you, and why, is in [transports.md](transports.md). The panel has the same
 switch, so you can also just try them there once it is installed.
 
-## 4. Install the plugin
+## 5. Install the plugin
 
 ```bash
 mkdir -p ~/.dsh/profiles/web/plugins
@@ -105,7 +121,7 @@ copy the block instead of retyping it.
 Restart the DSH shell. The panel appears as a small pill in the bottom-right corner; click it to
 open.
 
-## 5. Check that it works
+## 6. Check that it works
 
 Open the panel and look at the top:
 
@@ -122,7 +138,7 @@ curl -s 127.0.0.1:8787/limits -H 'authorization: Bearer local-bridge' | head -c 
 curl -s 127.0.0.1:8789/ | grep -o '"mode"[^,]*'
 ```
 
-## 6. If something is off
+## 7. If something is off
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
@@ -133,7 +149,7 @@ curl -s 127.0.0.1:8789/ | grep -o '"mode"[^,]*'
 | everything is green but requests fail | transport is wrong for your network | try `direct`, then a relay, then `proxy` — one at a time |
 | weekly rings are missing, five-hour works | Google did not return groups for that account | nothing to fix; the per-model numbers still work |
 
-## 7. What it talks to
+## 8. What it talks to
 
 Two local ports, both bound to loopback:
 

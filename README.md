@@ -64,6 +64,16 @@ DSH / любой OpenAI-клиент
 
 ## Быстрый старт
 
+### Одной командой
+
+```bash
+git clone https://github.com/ext3ndedsoft/gemini-to-dsh.git
+cd gemini-to-dsh
+node install.mjs
+```
+
+Ставит мост в `~/.dsh/bridge`, панель квоты в профиль DSH и дописывает её в `cordis.patch.yml` — не трогая то, что там уже есть. Повторный запуск ничего не дублирует. Дальше остаются только креды. По шагам, если хочется руками: [docs/plugin-install.md](docs/plugin-install.md).
+
 ### Если Гугл доступен напрямую
 
 ```bash

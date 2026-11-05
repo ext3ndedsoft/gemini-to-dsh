@@ -23,23 +23,39 @@ window.__ModuleLoader__.load({
 	--a:#8b5cf6;--b:#22d3ee;--good:#34d399;--warn:#fbbf24;--bad:#f87171;
 	font:12px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text)}
 .agq *{box-sizing:border-box}
+@keyframes agq-panel-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes agq-panel-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(6px) scale(.99)}}
+@keyframes agq-rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes agq-fade{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+@keyframes agq-dash{from{stroke-dashoffset:var(--full)}to{stroke-dashoffset:var(--off)}}
+@keyframes agq-pulse{0%{box-shadow:0 0 0 0 rgba(139,92,246,.35)}100%{box-shadow:0 0 0 10px rgba(139,92,246,0)}}
+@media (prefers-reduced-motion:reduce){
+	.agq *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+}
 .agq button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .agq .pill{display:flex;align-items:center;gap:9px;padding:7px 12px 7px 9px;border-radius:999px;
 	background:linear-gradient(180deg,rgba(30,30,42,.96),rgba(16,16,22,.96));
 	border:1px solid var(--line-strong);box-shadow:0 10px 30px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);
 	transition:transform .16s ease,box-shadow .16s ease}
 .agq .pill:hover{transform:translateY(-1px);box-shadow:0 14px 36px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.09)}
+.agq .pill:active{transform:scale(.97)}
+.agq .pill{transition:transform .16s ease,box-shadow .16s ease}
 .agq .pill b{display:block;font-size:12px;font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;line-height:1.15}
 .agq .pill span.sub{display:block;font-size:9px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
-.agq .panel{width:348px;max-width:calc(100vw - 28px);max-height:min(74vh,640px);overflow:auto;overscroll-behavior:contain;
+.agq .panel{display:flex;overflow:hidden;animation:agq-panel-in .24s cubic-bezier(.2,.9,.25,1) both;transform-origin:bottom right}
+.agq .panel.closing{animation:agq-panel-out .16s ease-in forwards}
+.agq .panel{width:348px;max-width:calc(100vw - 28px);max-height:min(74vh,640px);
 	margin-bottom:10px;border-radius:18px;padding:2px;
 	background:linear-gradient(160deg,rgba(139,92,246,.35),rgba(34,211,238,.18) 42%,transparent 70%);
 	box-shadow:0 26px 70px rgba(0,0,0,.65)}
-.agq .panel-in{border-radius:16px;padding:14px 14px 12px;background:
+.agq .panel-in{display:flex;flex-direction:column;min-height:0;flex:1;max-height:calc(min(74vh,640px) - 4px);border-radius:16px;padding:14px 14px 12px;background:
 	radial-gradient(120% 90% at 100% 0%,rgba(139,92,246,.10),transparent 55%),
 	linear-gradient(180deg,rgba(19,19,27,.99),rgba(12,12,17,.99))}
-.agq .panel-in::-webkit-scrollbar{width:6px}
-.agq .panel-in::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
+.agq .scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin:0 -2px;padding:0 2px 2px;
+	-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 16px),transparent);
+	mask-image:linear-gradient(180deg,#000 calc(100% - 16px),transparent)}
+.agq .scroll::-webkit-scrollbar{width:6px}
+.agq .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
 .agq .head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .agq .mark{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:700;
 	background:linear-gradient(135deg,var(--a),var(--b));color:#08080c;box-shadow:0 4px 14px rgba(139,92,246,.45)}
@@ -51,16 +67,20 @@ window.__ModuleLoader__.load({
 .agq .icon:hover{color:var(--text);border-color:var(--line-strong);background:rgba(255,255,255,.04)}
 .agq .icon.busy{animation:agq-spin 1s linear infinite;color:var(--b)}
 @keyframes agq-spin{to{transform:rotate(360deg)}}
-.agq .seg{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:3px;border-radius:12px;
+.agq .seg{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:3px;border-radius:12px;
 	background:rgba(255,255,255,.04);border:1px solid var(--line)}
+.agq .seg .thumb{position:absolute;top:3px;bottom:3px;width:calc((100% - 6px) / 4);border-radius:9px;
+	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 6px 18px rgba(139,92,246,.45),inset 0 1px 0 rgba(255,255,255,.25);
+	transition:left .26s cubic-bezier(.3,1.1,.4,1);pointer-events:none}
+.agq .seg button{position:relative;z-index:1}
 .agq .seg button{padding:7px 0;border-radius:9px;font-size:11px;font-weight:500;color:var(--muted);
 	transition:.15s;letter-spacing:.01em}
 .agq .seg button:hover{color:var(--text);background:rgba(255,255,255,.05)}
-.agq .seg button.on{color:#0a0a10;font-weight:600;
-	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 6px 18px rgba(139,92,246,.45),inset 0 1px 0 rgba(255,255,255,.25)}
+.agq .seg button.on{color:#0a0a10;font-weight:600}
 .agq .state{display:flex;align-items:center;gap:7px;margin:9px 2px 0;font-size:11px;color:var(--muted)}
 .agq .dot{width:6px;height:6px;border-radius:99px;flex:0 0 auto}
-.agq .state em{font-style:normal;color:var(--text);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agq .state em{font-style:normal;color:var(--text);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+	animation:agq-fade .2s ease both}
 .agq .relay{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 11px;border-radius:12px;
 	background:rgba(255,255,255,.03);border:1px solid var(--line)}
 .agq .relay .txt{flex:1;min-width:0}
@@ -76,7 +96,10 @@ window.__ModuleLoader__.load({
 	letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .agq .sect:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
 .agq .card{border:1px solid var(--line);border-radius:13px;padding:10px 11px;margin-bottom:8px;
-	background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008))}
+	background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));
+	animation:agq-rise .3s cubic-bezier(.2,.9,.25,1) both;transition:border-color .18s,transform .18s,box-shadow .18s}
+.agq .card:hover{border-color:rgba(255,255,255,.16);transform:translateY(-1px);
+	box-shadow:0 8px 24px rgba(0,0,0,.35)}
 .agq .card .top{display:flex;align-items:center;gap:7px;margin-bottom:8px}
 .agq .who{flex:1;min-width:0}
 .agq .who b{display:block;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -97,6 +120,7 @@ window.__ModuleLoader__.load({
 .agq .bar i{display:block;height:100%;border-radius:99px;transition:width .5s cubic-bezier(.3,.8,.4,1)}
 .agq .ring{position:relative;width:46px;height:46px;flex:0 0 auto}
 .agq .ring svg{transform:rotate(-90deg)}
+.agq .ring .arc{animation:agq-dash .7s cubic-bezier(.3,.9,.3,1)}
 .agq .ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:600;
 	letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .agq .rows{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,.06)}
@@ -105,11 +129,12 @@ window.__ModuleLoader__.load({
 .agq .row .pct{font-variant-numeric:tabular-nums}
 .agq .empty{font-size:10.5px;color:var(--muted);padding:2px 0}
 .agq .err{font-size:10.5px;color:var(--bad);padding:2px 0;word-break:break-word}
-.agq .foot{display:flex;gap:6px;margin-top:10px;position:sticky;bottom:-12px;padding:10px 0 12px;
-	background:linear-gradient(180deg,rgba(12,12,17,0),rgba(12,12,17,.92) 40%,rgba(12,12,17,.99))}
+.agq .foot{display:flex;gap:6px;margin-top:10px;flex:0 0 auto;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)}
 .agq .btn{flex:1;border:1px solid var(--line-strong);border-radius:9px;padding:7px 8px;font-size:11px;
 	color:var(--text);background:rgba(255,255,255,.03);transition:.15s}
-.agq .btn:hover{background:rgba(255,255,255,.07)}
+.agq .btn:hover{background:rgba(255,255,255,.07);transform:translateY(-1px)}
+.agq .btn:active{transform:scale(.985)}
+.agq .btn{transition:.15s,transform .12s}
 .agq .btn:disabled{opacity:.45;cursor:default}
 .agq .btn.wide{flex:2}
 .agq .input{width:100%;margin-top:7px;background:rgba(0,0,0,.35);border:1px solid var(--line-strong);
@@ -260,7 +285,12 @@ window.__ModuleLoader__.load({
 						strokeLinecap: "round",
 						strokeDasharray: circumference,
 						strokeDashoffset: circumference - filled,
-						style: { transition: "stroke-dashoffset .5s cubic-bezier(.3,.8,.4,1)" }
+						className: "arc",
+						style: {
+							transition: "stroke-dashoffset .5s cubic-bezier(.3,.8,.4,1)",
+							"--full": circumference,
+							"--off": circumference - filled
+						}
 					})
 				),
 				bare ? null : h("b", null, pct + "%")
@@ -278,9 +308,14 @@ window.__ModuleLoader__.load({
 				{ id: "vpn", label: "VPN" },
 				{ id: "direct", label: "Direct" }
 			];
+			const index = Math.max(0, options.findIndex((option) => option.id === value));
 			return h(
 				"div",
 				{ className: "seg", role: "tablist" },
+				h("span", {
+					className: "thumb",
+					style: { left: "calc(3px + " + index + " * ((100% - 6px) / 4))" }
+				}),
 				options.map((option) =>
 					h(
 						"button",
@@ -329,7 +364,7 @@ window.__ModuleLoader__.load({
 				"div",
 				null,
 				h(Segmented, { value: mode, onChange: onMode }),
-				h("div", { className: "state" }, h("span", { className: "dot", style: { background: dotColor, boxShadow: "0 0 8px " + dotColor } }), h("em", null, detail)),
+				h("div", { className: "state" }, h("span", { className: "dot", style: { background: dotColor, boxShadow: "0 0 8px " + dotColor } }), h("em", { key: detail }, detail)),
 				h(
 					"div",
 					{ className: "relay" },
@@ -395,7 +430,7 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function AccountCard({ account, pinned, onPin }) {
+		function AccountCard({ account, pinned, onPin, index = 0 }) {
 			const groups = account.groups || [];
 			const models = Object.entries(account.models || {})
 				.filter(([id]) => KEEP_MODEL(id))
@@ -404,7 +439,7 @@ window.__ModuleLoader__.load({
 
 			return h(
 				"div",
-				{ className: "card" },
+				{ className: "card", style: { animationDelay: index * 45 + "ms" } },
 				h(
 					"div",
 					{ className: "top" },
@@ -463,13 +498,28 @@ window.__ModuleLoader__.load({
 			const worst = primary ? worstOf(primary) : null;
 			const health = error ? "var(--bad)" : worst === null ? "var(--muted)" : toneOf(worst);
 
-			const toggle = () =>
-				setOpen((value) => {
+			const [closing, setClosing] = React.useState(false);
+
+			// Closing plays out before unmounting: a panel that vanishes on click reads as a
+			// glitch, one that steps back reads as an answer.
+			const toggle = () => {
+				const persist = (value) => {
 					try {
-						localStorage.setItem(OPEN_KEY, value ? "0" : "1");
+						localStorage.setItem(OPEN_KEY, value);
 					} catch {}
-					return !value;
-				});
+				};
+				if (!open) {
+					setOpen(true);
+					persist("1");
+					return;
+				}
+				setClosing(true);
+				setTimeout(() => {
+					setClosing(false);
+					setOpen(false);
+					persist("0");
+				}, 150);
+			};
 
 			const patch = async (body, label) => {
 				setBusy(true);
@@ -563,7 +613,7 @@ window.__ModuleLoader__.load({
 				open
 					? h(
 							"div",
-							{ className: "panel" },
+							{ className: "panel" + (closing ? " closing" : "") },
 							h(
 								"div",
 								{ className: "panel-in" },
@@ -579,7 +629,10 @@ window.__ModuleLoader__.load({
 										"⟳"
 									)
 								),
-								h(Transport, {
+								h(
+								"div",
+								{ className: "scroll" },
+h(Transport, {
 									egress,
 									busy,
 									note,
@@ -590,15 +643,17 @@ window.__ModuleLoader__.load({
 								}),
 								h("div", { className: "sect" }, "accounts"),
 								accounts.length
-									? accounts.map((account) =>
+									? accounts.map((account, index) =>
 											h(AccountCard, {
 												key: account.id,
+												index,
 												account,
 												pinned: account.id === (data && data.pinned),
 												onPin: pin
 											})
 										)
 									: h("div", { className: "empty" }, error ? "bridge unreachable" : "no accounts"),
+							),
 								h(
 									"div",
 									{ className: "foot" },

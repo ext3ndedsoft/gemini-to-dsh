@@ -64,6 +64,19 @@ The panel shows both Google quotas per account — the five-hour one and the **w
 
 ## Quick start
 
+### One command
+
+```bash
+git clone https://github.com/ext3ndedsoft/gemini-to-dsh.git
+cd gemini-to-dsh
+node install.mjs
+```
+
+Installs the bridge into `~/.dsh/bridge`, the quota panel into the DSH profile, and appends the
+plugin entry to `cordis.patch.yml` without touching what is already there. Running it twice
+duplicates nothing; only credentials are left. Step by step, by hand:
+[docs/plugin-install.md](docs/plugin-install.md).
+
 ### If Google is reachable from your network
 
 ```bash

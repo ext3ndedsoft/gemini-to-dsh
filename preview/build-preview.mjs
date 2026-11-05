@@ -48,7 +48,7 @@ function group(name, weekly, five) {
 }
 
 function account({ email, tier, groups, models, pinned }) {
-  return `<div class="card">
+  return `<div class="card" style="animation-delay:0ms">
     <div class="top">
       <span class="dot" style="background:${tone(71)}"></span>
       <div class="who"><b>${email}</b><span>${tier}${pinned ? ' · pinned' : ''}</span></div>
@@ -82,7 +82,8 @@ ${styles}
       <span class="mark">A</span><h1>Antigravity</h1><span class="chip">AI Pro</span>
       <button class="icon">⟳</button>
     </div>
-    <div class="seg"><button>DNS</button><button class="on">Proxy</button><button>VPN</button><button>Direct</button></div>
+    <div class="scroll">
+    <div class="seg"><span class="thumb" style="left:calc(3px + 1 * ((100% - 6px) / 4))"></span><button>DNS</button><button class="on">Proxy</button><button>VPN</button><button>Direct</button></div>
     <div class="state"><span class="dot" style="background:var(--good);box-shadow:0 0 8px var(--good)"></span>
       <em>dagami › bezmezhau › direct</em></div>
     <div class="relay">
@@ -110,6 +111,7 @@ ${styles}
       groups: [{ name: 'Gemini Models', weekly: 98, five: 100 }],
       models: [{ id: 'gemini-3.8-flash-tiered', pct: 100, reset: 'in 6d' }]
     })}
+    </div>
     <div class="foot">
       <button class="btn wide">add account</button>
       <button class="btn">test route</button>

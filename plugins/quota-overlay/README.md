@@ -28,6 +28,13 @@ from. It is the same thing as the segmented control, sized for a thumb.
 **Accounts.** Which is pinned (served first), which is a session, which is dead and why. `pin`
 reorders the pool; `add account` starts the OAuth flow in a new tab.
 
+## Motion
+
+The panel steps in rather than blinking in: a short rise on open, a shorter fall on close, the
+mode thumb slides between segments, rings draw themselves from zero, account cards cascade in,
+and the status line cross-fades when the text changes. Everything is CSS — no animation library,
+no layout thrash — and `prefers-reduced-motion` turns all of it off.
+
 ## Requirements
 
 - the bridge on `127.0.0.1:8787` (`~/.dsh/bridge/bridge.js`);
