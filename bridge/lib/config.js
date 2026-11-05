@@ -57,7 +57,7 @@ export function resolveModel(requested) {
 }
 
 /** How long the upstream may stay silent before an attempt counts as failed. */
-export const UPSTREAM_TIMEOUT_MS = Number(process.env.AG_UPSTREAM_TIMEOUT_MS || 20000);
+export const UPSTREAM_TIMEOUT_MS = Number(process.env.AG_UPSTREAM_TIMEOUT_MS || 60000);
 
 export function log(...args) {
   console.log(new Date().toISOString(), ...args);

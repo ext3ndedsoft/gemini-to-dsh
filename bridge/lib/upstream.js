@@ -99,9 +99,12 @@ export async function upstream(body, signal) {
     try {
       res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, { signal });
     } catch (err) {
+      // A cancelled turn is not the account's fault: the person pressed stop (or
+      // walked away), so there is nothing to cool down and nothing to blame.
+      if (signal?.aborted) throw err;
       // The failure is a measurement too: an account that hangs for the whole
       // header budget has earned its latency reading, or the ranking keeps putting
-      // it first and the person keeps waiting 20 s before the failover.
+      // it first and the person keeps waiting for the whole budget before failover.
       recordLatency(account, Date.now() - startedAt);
       log(`account ${account.id} threw for ${model} after ${Date.now() - startedAt}ms: ${networkReason(err)}`);
       markCooling(account, model, Date.now() + 300_000);

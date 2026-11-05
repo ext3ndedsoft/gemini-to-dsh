@@ -138,7 +138,7 @@ async function probeAccount(id) {
     });
     payload.project = (await getProject(account)) || undefined;
     // A slow account is the thing being measured, so the probe has to outlive
-    // the 20 s header budget that protects real turns.
+    // the header budget that protects real turns.
     const upstreamRes = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, {
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       retries: 0,
