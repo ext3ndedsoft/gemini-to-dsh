@@ -213,7 +213,7 @@ window.__ModuleLoader__.load({
 
 		function resetIn(iso) {
 			if (!iso) return "";
-			const at = Date.parse(iso);
+			const at = typeof iso === "number" ? iso : Date.parse(iso);
 			if (!Number.isFinite(at)) return "";
 			const minutes = Math.round((at - Date.now()) / 60000);
 			if (minutes <= 0) return "now";
@@ -858,7 +858,7 @@ window.__ModuleLoader__.load({
 				h(
 					"div",
 					{ className: "top" },
-					h("span", { className: "dot", style: { background: account.ok ? toneOf(worst ?? 100) : "var(--bad)" } }),
+					h("span", { className: "dot", style: { background: account.ok && !account.limitedUntil ? toneOf(worst ?? 100) : "var(--bad)" } }),
 					h(
 						"div",
 						{ className: "who" },
@@ -892,7 +892,7 @@ window.__ModuleLoader__.load({
 											)
 							)
 						),
-						h("span", null, [account.tierName, account.native ? "session" : null, account.pinned ? "pinned" : null].filter(Boolean).join(" · ") || "account")
+						h("span", null, [account.tierName, account.native ? "session" : null, account.pinned ? "pinned" : null, account.limitedUntil ? "quota exhausted · resets " + resetIn(account.limitedUntil) : null].filter(Boolean).join(" · ") || "account")
 					),
 					pinned
 						? h("span", { className: "here" }, "этот")

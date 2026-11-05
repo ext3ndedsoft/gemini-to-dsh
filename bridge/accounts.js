@@ -110,7 +110,11 @@ function log(...args) {
 function saveStore() {
   fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
   const tmp = STORE_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
+  // Wall clocks ride along: "spent until the 12th" must not turn back into
+  // "healthy" just because the bridge restarted, or every restart re-learns the
+  // same dead account with another 429.
+  const payload = { ...store, cooldowns: Object.fromEntries(cooldowns) };
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
   fs.renameSync(tmp, STORE_FILE);
 }
 
@@ -201,6 +205,10 @@ export function loadStore() {
     // here silently reset the setting on every boot.
     ...(parsed && parsed.rotation ? { rotation: parsed.rotation } : {}),
   };
+  const now = Date.now();
+  for (const [key, at] of Object.entries((parsed && parsed.cooldowns) || {})) {
+    if (typeof at === 'number' && at > now) cooldowns.set(key, at);
+  }
   bootstrapNative();
   if (source !== STORE_FILE) {
     saveStore();
@@ -396,7 +404,12 @@ export async function accountQuota(acc, { force = false } = {}) {
 // ------------------------------------------------------------------ selection
 
 export function markCooling(acc, model, untilMs) {
-  cooldowns.set(`${acc.id}|${model}`, Math.max(untilMs || Date.now() + 120_000, Date.now() + 15_000));
+  const until = Math.max(untilMs || Date.now() + 120_000, Date.now() + 15_000);
+  cooldowns.set(`${acc.id}|${model}`, until);
+  // A long wall is worth a write to the store: it has to survive a restart, or a
+  // client goes back to calling a spent account healthy. A per-minute throttle is
+  // not — persisting that would turn a retry loop into a disk loop.
+  if (until - Date.now() > 30 * 60_000) saveStore();
 }
 
 /**
