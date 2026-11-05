@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { startVpnWatch, vpnSnapshot } from './lib/vpn-detect.js';
 import tls from 'node:tls';
 
 export const CONFIG_FILE = process.env.AG_EGRESS_FILE || path.join(os.homedir(), '.dsh', 'ag-egress.json');
@@ -28,6 +29,12 @@ const DEFAULT_CONFIG = {
 	enabled: true,
 	proxy: '',
 	relay: '',
+	// How Google traffic leaves this machine:
+	//   dns    = smart-DNS relay chain (route + routeChain)
+	//   proxy  = one CONNECT proxy (proxy / fallbackProxy)
+	//   vpn    = a system tunnel the user runs; we only report whether it is up
+	//   direct = no relaying at all
+	mode: 'dns',
 	allow: ['*.googleapis.com', 'googleapis.com'],
 	fallback: 'direct',
 	connectTimeout: 15000,
@@ -51,6 +58,40 @@ const DEFAULT_CONFIG = {
 	}
 };
 
+/** Transports the user can pick. */
+export const MODES = ['dns', 'proxy', 'vpn', 'direct'];
+
+/**
+ * Mode is explicit, but a file written before it existed has no such field. Those files
+ * carry a proxy slot or a disabled flag instead, so infer from what is actually there.
+ */
+function resolveMode(raw, merged) {
+	if (MODES.includes(raw.mode)) return raw.mode;
+	if (raw.enabled === false) return 'direct';
+	if (merged.proxy || merged.fallbackProxy) return 'proxy';
+	return 'dns';
+}
+
+/** Human-readable state of the current mode, for the panel. */
+export function describeMode(config) {
+	const mode = resolveMode(config, config);
+	if (mode === 'proxy') {
+		const slot = config.proxy || config.fallbackProxy || '';
+		return { mode, label: 'Proxy', ready: Boolean(slot), detail: slot ? maskProxy(slot) : 'proxy url is not set' };
+	}
+	if (mode === 'vpn') {
+		const vpn = vpnSnapshot();
+		return {
+			mode,
+			label: 'VPN',
+			ready: Boolean(vpn.connected),
+			detail: vpn.connected ? vpn.name || 'tunnel is up' : 'no VPN adapter is up'
+		};
+	}
+	if (mode === 'direct') return { mode, label: 'Direct', ready: true, detail: 'no relay' };
+	return { mode, label: 'DNS', ready: true, detail: routeChainOf(config).join(' > ') };
+}
+
 /** Every channel a route may name. */
 export function channelNames(config) {
 	return ['proxy', ...Object.keys(config.providers || {}), 'direct'];
@@ -58,6 +99,11 @@ export function channelNames(config) {
 
 /** The ordered list of channels to attempt for one connection (always non-empty). */
 export function routeChainOf(config) {
+	const mode = resolveMode(config, config);
+	// VPN and direct never relay: the tunnel, or the operating system, is the path.
+	if (mode === 'vpn' || mode === 'direct') return ['direct'];
+	// A single proxy is not a chain: try it, then fall back to a plain connection.
+	if (mode === 'proxy') return ['proxy', 'direct'];
 	const known = channelNames(config);
 	const chain = [];
 	for (const name of [config.route, ...(config.routeChain || [])]) {
@@ -108,7 +154,7 @@ function normalizeConfig(raw) {
 	} else {
 		routeChain = [...new Set([route, ...Object.keys(providers), 'direct'])];
 	}
-	return { ...config, route, routeChain, providers };
+	return { ...config, route, routeChain, providers, mode: resolveMode(raw, config) };
 }
 
 /* ------------------------------------------------------------------ config */
@@ -644,6 +690,8 @@ export function createWatchdog({
 			// Nothing to watch when routing is off or already direct: direct failing
 			// means the machine itself has no network, and no channel can fix that.
 			if (!config.enabled || !config.route || config.route === 'direct') return state;
+			// VPN and direct are not ours to watch: a tunnel or the OS carries the traffic.
+			if (config.mode === 'vpn' || config.mode === 'direct') return state;
 			const current = config.route;
 			if (state.route !== current) {
 				// Someone picked a route by hand; that choice restarts the count.
@@ -692,6 +740,7 @@ export function createWatchdog({
 }
 
 export function startEgress({ log = () => {}, port = 0 } = {}) {
+	startVpnWatch();
 	readConfig(true); // a fresh shim never starts on a stale cached config
 	const stats = { total: 0, proxied: 0, direct: 0, failed: 0, lastError: null, lastRoute: null, lastHost: null, lastAt: null };
 	const watchdog = createWatchdog({ log });
@@ -759,6 +808,9 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				return {
 					ok: true,
 					stats,
+					mode: live.mode,
+					modeInfo: describeMode(live),
+					vpn: vpnSnapshot(),
 					route: live.route,
 					chain: routeChainOf(live),
 					channels: channelNames(live),
@@ -820,6 +872,18 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 				} catch {
 					send(400, { ok: false, error: 'body is not JSON' });
 					return;
+				}
+				if (patch.mode !== undefined) {
+					if (!MODES.includes(patch.mode)) {
+						send(400, { ok: false, error: 'mode must be one of ' + MODES.join(', ') });
+						return;
+					}
+					// Promising a proxy that is not configured would silently behave like direct.
+					const live = readConfig();
+					if (patch.mode === 'proxy' && !patch.proxy && !patch.fallbackProxy && !live.proxy && !live.fallbackProxy) {
+						send(400, { ok: false, error: 'mode "proxy" needs a proxy url' });
+						return;
+					}
 				}
 				if (patch.proxy) {
 					const parsed = parseProxy(patch.proxy);

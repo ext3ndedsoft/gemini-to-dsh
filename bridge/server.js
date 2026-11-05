@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * gemini-to-dsh-bridge — OpenAI-compatible endpoint for Antigravity's Cloud Code
+ * antigravity-bridge — OpenAI-compatible endpoint for Antigravity's Cloud Code
  * transport. Lets any OpenAI client (DSH included) drive Gemini 3.8 Flash with
  * native tool calling, using the OAuth session already present in
  * ~/.gemini/oauth_creds.json.
@@ -43,6 +43,7 @@ import {
   sendJson,
 } from './lib/http.js';
 import { handleOnce } from './lib/complete.js';
+import { answerText, generate, routeFor } from './lib/images.js';
 import { saveSignatures } from './lib/signatures.js';
 import { handleStream } from './lib/stream.js';
 import { getCatalog } from './lib/upstream.js';
@@ -60,9 +61,19 @@ async function handleModels(res) {
     data.push({
       id,
       object: 'model',
+      name: id,
       owned_by: 'antigravity',
       context_window: meta.maxTokens || 1_048_576,
       max_output_tokens: meta.maxOutputTokens || 65_536,
+      architecture: {
+        input_modalities: ['text'],
+        output_modalities: ['text'],
+      },
+      pricing: {
+        prompt: '0',
+        completion: '0',
+      },
+      supported_parameters: ['temperature', 'top_p', 'max_tokens', 'response_format'],
     });
   }
   for (const [alias, target] of MODEL_ALIASES) {
@@ -71,15 +82,28 @@ async function handleModels(res) {
     data.push({
       id: alias,
       object: 'model',
+      name: alias,
       owned_by: 'antigravity',
       context_window: meta.maxTokens || 1_048_576,
       max_output_tokens: meta.maxOutputTokens || 65_536,
+      architecture: {
+        input_modalities: ['text'],
+        output_modalities: ['text'],
+      },
+      pricing: {
+        prompt: '0',
+        completion: '0',
+      },
+      supported_parameters: ['temperature', 'top_p', 'max_tokens', 'response_format'],
     });
   }
   sendJson(res, 200, { object: 'list', data });
 }
 
-function authorized(req) {
+function authorized(req, url) {
+  if (url && url.pathname.startsWith('/api/v1/')) {
+    return isLocal(req);
+  }
   const header = req.headers.authorization || '';
   const provided = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
   const expected = Buffer.from(SHARED_SECRET);
@@ -135,6 +159,75 @@ async function handleAccountRoutes(req, res, url) {
   }
 }
 
+/**
+ * Image turns end here instead of in lib/stream.js: the picture is written to disk
+ * and the path goes back as markdown, because a chat client cannot render base64
+ * and an "answer" with no text is indistinguishable from a broken turn.
+ */
+async function handleImage(req, res, body, mode) {
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+
+  let result;
+  try {
+    result = await generate(body, { signal: controller.signal });
+  } catch (err) {
+    // 429 is the provider asking for patience, not a bad request: keep it as 429
+    // so the client backs off instead of reporting "invalid request".
+    const status = err.status === 429 ? 429 : err.status && err.status < 500 ? 400 : 502;
+    return openAiError(res, status, err.message, status === 429 ? 'image_busy' : 'image_failed');
+  }
+  if (!result.files.length) {
+    return openAiError(
+      res,
+      502,
+      'the image model returned no picture' + (result.text ? ': ' + result.text.slice(0, 300) : ''),
+      'empty_image_response'
+    );
+  }
+  log(`image turn (${mode}) -> ${result.files.length} file(s)`);
+
+  const content = answerText(result.files, result.text);
+  const id = 'chatcmpl-' + crypto.randomBytes(12).toString('hex');
+  const created = Math.floor(Date.now() / 1000);
+  const model = body.model;
+
+  if (!body.stream) {
+    return sendJson(res, 200, {
+      id,
+      object: 'chat.completion',
+      created,
+      model,
+      choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+      images: result.files.map((file) => ({ path: file, type: 'image' })),
+    });
+  }
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  const chunk = (delta, finishReason) => {
+    res.write(
+      'data: ' +
+        JSON.stringify({
+          id,
+          object: 'chat.completion.chunk',
+          created,
+          model,
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        }) +
+        '\n\n'
+    );
+  };
+  chunk({ role: 'assistant', content: '' }, null);
+  chunk({ content }, null);
+  chunk({}, 'stop');
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://' + HOST + ':' + PORT);
 
@@ -164,7 +257,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
-    return sendJson(res, 200, { ok: true, service: 'gemini-to-dsh-bridge', port: PORT });
+    return sendJson(res, 200, { ok: true, service: 'antigravity-bridge', port: PORT });
   }
 
   // Reached by a browser redirect from Google, so it carries no bridge token.
@@ -189,15 +282,15 @@ const server = http.createServer(async (req, res) => {
     return handleAccountRoutes(req, res, url);
   }
 
-  if (!authorized(req)) {
+  if (!authorized(req, url)) {
     return openAiError(res, 401, 'invalid bridge token', 'invalid_api_key');
   }
 
-  if (req.method === 'GET' && url.pathname === '/v1/models') {
+  if (req.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/api/v1/models')) {
     return handleModels(res);
   }
 
-  if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+  if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/api/v1/chat/completions')) {
     let body;
     try {
       body = await jsonBody(req);
@@ -213,6 +306,9 @@ const server = http.createServer(async (req, res) => {
       const toolChars = Array.isArray(body.tools) ? JSON.stringify(body.tools).length : 0;
       const messageChars = JSON.stringify(body.messages).length;
       log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
+      // Asking any model for a picture lands on the image model: words, not a command.
+      const imageRoute = routeFor(body);
+      if (imageRoute) return await handleImage(req, res, body, imageRoute);
       if (body.stream) await handleStream(req, res, body);
       else await handleOnce(req, res, body);
     } catch (err) {
@@ -230,7 +326,7 @@ server.headersTimeout = 120_000;
 server.keepAliveTimeout = 90_000;
 
 server.listen(PORT, HOST, () => {
-  log(`gemini-to-dsh-bridge listening on http://${HOST}:${PORT}`);
+  log(`antigravity-bridge listening on http://${HOST}:${PORT}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

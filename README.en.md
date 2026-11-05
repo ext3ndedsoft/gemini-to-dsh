@@ -59,8 +59,8 @@ Where Google is blocked, the bridge connects through smart-DNS relays: the resol
 **Web search that does not get throttled into uselessness.**
 A DSH plugin that registers a `web_search` provider: keyed APIs (Serper, Tavily, Brave, Google CSE, Exa) first, DuckDuckGo behind them, ScraperAPI's Google endpoint as the paid last resort — all behind a 10-minute cache, single-flight, a token bucket, a challenge detector and a 90-second cooldown. The free path settles around 7-8 queries a minute (a burst of two, then one per eight seconds); the plugin is built around that ceiling instead of pretending it is not there.
 
-**A quota overlay and a context trimmer.**
-Two small plugins: a sidebar panel with per-account quota, and a `lean-context` pass that replaces old tool results with a marker so long sessions do not drown in their own history.
+**Quota on both windows, and a transport switch.**
+The panel shows both Google quotas per account — the five-hour one and the **weekly** one — as a ring with the percentage left and a reset countdown, per group ("Gemini Models", "Claude and GPT models"). Next to it, the transport: DNS, Proxy, VPN or Direct, with one honest line of state instead of an intention. Plus `lean-context`, which trims old tool results so long sessions do not drown in their own history.
 
 ## Quick start
 
@@ -125,6 +125,23 @@ What does not: "what is in this picture", "describe the photo", «проанал
 
 Three knobs: `AG_IMAGE_MODEL` picks the model, `AG_IMAGE_DIR` the folder, `AG_IMAGE_AUTO=0` turns the word routing off so only the model name counts. Details and how to swap the provider — [docs/images.md](docs/images.md).
 
+## Quota and transports
+
+**Two windows.** Google meters Cloud Code on a five-hour window and a weekly one at the same time. The panel shows both: weekly as a ring (that is the one that ends the week early and does not come back in a couple of hours), five-hour as a `5H` badge underneath. Where those numbers come from, and why an ordinary client never saw the weekly one — [docs/quotas.md](docs/quotas.md).
+
+**Four transport modes.** The switch in the panel changes how traffic leaves the machine:
+
+| Mode | What the shim does |
+| --- | --- |
+| `DNS` | connects to a smart-DNS relay from `route` / `routeChain`; SNI and certificate stay Google's |
+| `Proxy` | CONNECT to `proxy`, then `fallbackProxy` |
+| `VPN` | nothing: traffic already leaves through a tunnel, the shim only checks that it is up |
+| `Direct` | nothing: no relaying at all |
+
+The mode is an explicit `mode` field in `~/.dsh/ag-egress.json`, not a side effect of whichever fields happen to be set. Older files without a mode are read from the same fields as before. Which one fits your network, and how to switch from a terminal — [docs/transports.md](docs/transports.md).
+
+**The panel is a plugin.** Step by step, from an empty machine to a working panel: [docs/plugin-install.md](docs/plugin-install.md).
+
 ## Configuration
 
 Everything is env-first; the [`.env.example`](.env.example) lists every variable the bridge itself reads, with its default in a comment. (The plugins read a few of their own — `AG_BRIDGE_URL`, `AG_EGRESS_URL`, `WARP_CLI` — documented in each plugin's README.) The ones that matter most:
@@ -151,7 +168,7 @@ Everything is env-first; the [`.env.example`](.env.example) lists every variable
 | Plugin | What it does |
 | --- | --- |
 | [`web-search`](plugins/web-search/README.md) | `web_search` provider: keyed APIs → DuckDuckGo, cached and paced |
-| [`quota-overlay`](plugins/quota-overlay/README.md) | Sidebar panel: accounts, per-model quota, egress route |
+| [`quota-overlay`](plugins/quota-overlay/README.md) | Panel: accounts, weekly and five-hour quota, transport mode |
 | [`lean-context`](plugins/lean-context/README.md) | Replaces old tool results so long sessions stay cheap |
 
 Install by dropping the folder into `~/.dsh/profiles/web/plugins/` and adding one line to the profile patch:

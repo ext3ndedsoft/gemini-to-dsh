@@ -1,5 +1,5 @@
 /**
- * Multi-account layer for gemini-to-dsh-bridge.
+ * Multi-account layer for antigravity-bridge.
  *
  * Keeps a local pool of Google accounts that hold Antigravity entitlements,
  * refreshes their tokens, reads their model quota from Cloud Code, and ranks
@@ -15,6 +15,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { UPSTREAM_TIMEOUT_MS } from './lib/config.js';
+import { fetchQuotaSummary } from './lib/quota.js';
 import { readConfig } from './egress.js';
 
 export const API = 'https://daily-cloudcode-pa.googleapis.com';
@@ -42,7 +44,7 @@ function oauth() {
       return oauthCache;
     }
   } catch {
-    // absent or unreadable — explained to the caller below
+    // absent or unreadable вЂ” explained to the caller below
   }
   throw new Error(
     `OAuth client is not configured: set AG_CLIENT_ID and AG_CLIENT_SECRET, or write ` +
@@ -61,8 +63,13 @@ const SCOPES = [
 
 export const CREDS_FILE =
   process.env.AG_CREDS_FILE || path.join(os.homedir(), '.gemini', 'oauth_creds.json');
+// The account pool lives inside the quota plugin, not next to the Google session:
+// a backup of the plugin then carries the accounts with it. The bridge is started
+// from several places (DSH supervisor, the logon task, start.cmd), so this default
+// – not an env var – is what keeps all of them on the same file.
 const STORE_FILE =
-  process.env.AG_ACCOUNTS_FILE || path.join(path.dirname(CREDS_FILE), 'dsh-bridge', 'accounts.json');
+  process.env.AG_ACCOUNTS_FILE ||
+  path.join(os.homedir(), '.dsh', 'profiles', 'web', 'plugins', 'ag-limits', 'accounts.json');
 
 const MODELS_TTL = 45_000;
 const META_TTL = 3_600_000;
@@ -233,10 +240,20 @@ export function networkReason(err) {
   return code ? `${err.message} (${code})` : String(err && err.message);
 }
 
-// The tunnel can die after the CONNECT succeeds — that is how the GeoHide legs
+// The tunnel can die after the CONNECT succeeds вЂ” that is how the GeoHide legs
 // fail, since a dead proxy still accepts TCP and only the TLS underneath falls
 // over. Those are worth another go; a 4xx is not.
 const RETRYABLE = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|other side closed|TLS|SSL/i;
+
+/**
+ * A stalled upstream used to sit silently forever: no headers, no error, nothing
+ * in the log, and the client hung with it. Bound the wait for response headers so
+ * a dead tier turns into a retry instead of a hang.
+ */
+function headerSignal(signal) {
+  const timeout = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
 
 export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {}) {
   // A relay is any HTTPS base that forwards `/<path>` to the Cloud Code API, so a
@@ -254,7 +271,7 @@ export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {
         'user-agent': USER_AGENT,
       },
       body: JSON.stringify(body),
-      signal,
+      signal: headerSignal(signal),
     });
 
   let lastError = null;
@@ -265,11 +282,12 @@ export async function cloudPost(acc, pathname, body, { signal, retries = 2 } = {
       if (res.status === 401) res = await call(await accountToken(acc, { force: true }));
       return res;
     } catch (err) {
+      if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) throw err;
       lastError = err;
       // A cancelled turn must not be retried, and neither must a logic error.
       if ((signal && signal.aborted) || !RETRYABLE.test(networkReason(err))) throw err;
       if (attempt === retries) break;
-      log(`cloudPost ${pathname} ${networkReason(err)} — retry ${attempt + 1}/${retries}`);
+      log(`cloudPost ${pathname} ${networkReason(err)} вЂ” retry ${attempt + 1}/${retries}`);
       await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
     }
   }
@@ -406,6 +424,25 @@ export function listAccounts({ withQuota = false } = {}) {
   return base;
 }
 
+const quotaSummaryCache = new Map(); // accountId -> { at, value }
+const QUOTA_SUMMARY_TTL = 60 * 1000;
+
+/** Cached grouped quota. Failures cache too, so a broken account cannot slow the whole panel. */
+async function quotaSummary(acc) {
+  const cached = quotaSummaryCache.get(acc.id);
+  if (cached && Date.now() - cached.at < QUOTA_SUMMARY_TTL) return cached.value;
+  try {
+    const token = await accountToken(acc);
+    const value = await fetchQuotaSummary({ token, project: acc.project });
+    quotaSummaryCache.set(acc.id, { at: Date.now(), value });
+    return value;
+  } catch (err) {
+    log('quota summary failed for ' + (acc.email || acc.id) + ': ' + err.message);
+    quotaSummaryCache.set(acc.id, { at: Date.now(), value: null });
+    return null;
+  }
+}
+
 export async function limitsReport({ force = false } = {}) {
   const current = loadStore();
   const accounts = await Promise.all(
@@ -426,6 +463,12 @@ export async function limitsReport({ force = false } = {}) {
         row.tierName = acc.tierName || null;
         row.models = quota.models;
         row.at = quota.at;
+        // Grouped windows (5h + weekly) live behind a separate endpoint and are optional.
+        const [, summary] = await Promise.allSettled([null, quotaSummary(acc)]);
+        const summaryValue = summary.status === 'fulfilled' ? summary.value : null;
+        row.groups = summaryValue ? summaryValue.groups : null;
+        row.groupsAt = summaryValue ? summaryValue.at : null;
+        row.groupsHost = summaryValue ? summaryValue.host : null;
       } catch (err) {
         row.ok = false;
         row.error = err.message;

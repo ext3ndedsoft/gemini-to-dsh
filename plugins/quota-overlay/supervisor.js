@@ -65,6 +65,9 @@ async function healthy(timeout = 1500) {
  * something this process can revive by itself.
  */
 function tunnelPort() {
+	// A tunnel the user runs, or a deliberate direct connection, is not ours to revive.
+	// WARP is only ever used as a local proxy for the smart-DNS research flow.
+	if (mode() === 'vpn' || mode() === 'direct') return 0;
 	try {
 		const cfg = JSON.parse(fs.readFileSync(EGRESS_FILE, "utf8"));
 		const url = new URL(cfg.proxy || "");
@@ -105,6 +108,14 @@ async function waitForPort(port, tries = 10) {
  * client update can leave the port dead while the shim keeps pointing at it —
  * then every Google call fails and quota goes blank.
  */
+function mode() {
+	try {
+		return String(JSON.parse(fs.readFileSync(EGRESS_FILE, 'utf8')).mode || 'dns');
+	} catch {
+		return 'dns';
+	}
+}
+
 export async function ensureTunnel(log = () => {}) {
 	const port = tunnelPort();
 	if (!port) return { port: 0, up: false, skipped: true };

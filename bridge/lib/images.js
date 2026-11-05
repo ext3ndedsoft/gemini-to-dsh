@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_IMAGE_MODEL, IMAGE_AUTO, IMAGE_DIR, log } from './config.js';
+import { DEFAULT_IMAGE_MODEL, IMAGE_API_KEY, IMAGE_AUTO, IMAGE_BASE_URL, IMAGE_DIR, IMAGE_PROVIDER, IMAGE_QUALITY, IMAGE_SIZE, log } from './config.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
 
 // `\b` is ASCII-only in JS, so the Cyrillic half is written without boundaries:
@@ -131,10 +131,71 @@ export function answerText(files, text) {
 }
 
 /**
+ * Any service that speaks POST /v1/images/generations. The key never lives in the
+ * repository: it comes from the environment or ~/.dsh/image-provider.json.
+ */
+export async function generateViaApi(body, { signal, model } = {}) {
+  if (!IMAGE_BASE_URL || !IMAGE_API_KEY) {
+    throw Object.assign(
+      new Error(
+        'image provider is not configured: set AG_IMAGE_BASE_URL and AG_IMAGE_API_KEY, or write {baseUrl, apiKey} to ~/.dsh/image-provider.json'
+      ),
+      { status: 500 }
+    );
+  }
+
+  const prompt = lastUserText(body && body.messages).trim();
+  if (!prompt) throw Object.assign(new Error('nothing to draw: the request has no text'), { status: 400 });
+
+  const request = { model: model || DEFAULT_IMAGE_MODEL, prompt, n: 1, size: IMAGE_SIZE };
+  if (IMAGE_QUALITY) request.quality = IMAGE_QUALITY;
+
+  const response = await fetch(`${IMAGE_BASE_URL}/images/generations`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${IMAGE_API_KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    let message = text.slice(0, 300);
+    try {
+      const parsed = JSON.parse(text);
+      message = (parsed.error && (parsed.error.message || parsed.error)) || parsed.message || message;
+      if (typeof message === 'object') message = JSON.stringify(message).slice(0, 300);
+    } catch {
+      /* plain text is fine */
+    }
+    throw Object.assign(new Error(`${request.model} answered ${response.status}: ${message}`), {
+      status: response.status,
+    });
+  }
+
+  const json = await response.json();
+  const item = (json.data || [])[0] || {};
+  const files = [];
+
+  if (item.b64_json) {
+    files.push(saveImage('image/png', item.b64_json));
+  } else if (item.url) {
+    const bin = await fetch(item.url, { signal });
+    if (!bin.ok) throw Object.assign(new Error(`could not download the picture: ${bin.status}`), { status: 502 });
+    files.push(saveImage(bin.headers.get('content-type') || 'image/png', Buffer.from(await bin.arrayBuffer()).toString('base64')));
+  } else {
+    throw Object.assign(new Error('the image provider returned neither b64_json nor url'), { status: 502 });
+  }
+
+  log(`image: ${request.model} via api produced ${files.length} file(s) -> ${files.join(', ')}`);
+  return { files, text: '', upstreamText: '' };
+}
+
+/**
  * Calls the image model and collects what came back.
  * Returns `{ files, text, upstreamText }` — `upstreamText` is kept for logs only.
  */
 export async function generate(body, { signal, model } = {}) {
+  if (IMAGE_PROVIDER === 'openai') return generateViaApi(body, { signal, model });
   const target = model || DEFAULT_IMAGE_MODEL;
   const request = {
     ...body,
