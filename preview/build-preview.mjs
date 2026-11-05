@@ -61,8 +61,8 @@ function account({ email, tier, groups, models, pinned, latency, when, requests 
   return `<div class="card">
     <div class="top">
       <span class="dot" style="background:${tone(71)}"></span>
-      <div class="who"><b>${email}</b><span>${tier}${pinned ? ' · pinned' : ''}</span></div>
-      ${pinned ? '<span class="here">этот</span>' : '<button class="mini">переключить</button>'}<button class="del">×</button>
+      <div class="who"><span class="mail"><b>${email}</b><button class="del" aria-label="удалить"><svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="M1.6 1.6 8.4 8.4M8.4 1.6 1.6 8.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></span><span>${tier}${pinned ? ' · pinned' : ''}</span></div>
+      ${pinned ? '<span class="here">этот</span>' : '<button class="mini">переключить</button>'}
     </div>
     <div class="lat"><span>ответ</span><b>${latency || '—'}</b><span class="when">${when || 'нет замера'}</span><span class="req">${requests || ''}</span><button class="mini">проверить</button></div>
     ${groups.map((g) => group(g.name, g.weekly, g.five, g.reset || 'in 6d 22h')).join('')}

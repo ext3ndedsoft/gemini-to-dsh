@@ -131,7 +131,10 @@ window.__ModuleLoader__.load({
 .agq .card .lat .when{margin-right:auto;opacity:.8}
 .agq .card .lat .mini{opacity:.75}
 .agq .card .lat .mini:hover{opacity:1}
-.agq .card .del{margin-left:6px;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:13px;line-height:1;color:var(--muted);background:transparent;border:1px solid transparent;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.agq .card .mail{display:flex;align-items:center;gap:5px;min-width:0}
+.agq .card .mail b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agq .card .del{margin-left:1px;width:16px;height:16px;border-radius:5px;display:grid;place-items:center;padding:0;font-size:9.5px;line-height:1;color:var(--muted);opacity:.55;background:transparent;border:1px solid transparent;cursor:pointer;transition:color .15s,border-color .15s,background .15s,opacity .15s}
+.agq .card .del svg{display:block}
 .agq .card .del:hover{color:var(--bad);border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
 .agq .card .del.ask{width:auto;padding:0 7px;font-size:9.5px;letter-spacing:.04em;color:#ffd7d7;border-color:rgba(255,107,107,.5);background:rgba(255,107,107,.14)}
 .agq .card .lat .req{opacity:.55;font-variant-numeric:tabular-nums}
@@ -847,7 +850,36 @@ window.__ModuleLoader__.load({
 					h(
 						"div",
 						{ className: "who" },
-						h("b", { title: account.email || account.id }, account.email || account.id),
+						h(
+							"span",
+							{ className: "mail" },
+							h("b", { title: account.email || account.id }, account.email || account.id),
+							h(
+								"button",
+								{
+									className: "del" + (confirming ? " ask" : ""),
+									onClick: askRemove,
+									disabled: removing,
+									title: account.native ? "аккаунт сессии удалить нельзя" : "удалить аккаунт",
+									"aria-label": "удалить аккаунт"
+								},
+								removing
+									? "…"
+									: confirming
+										? "удалить?"
+										: h(
+												"svg",
+												{ viewBox: "0 0 10 10", width: 8, height: 8, "aria-hidden": "true" },
+												h("path", {
+													d: "M1.6 1.6 8.4 8.4M8.4 1.6 1.6 8.4",
+													fill: "none",
+													stroke: "currentColor",
+													"stroke-width": 1.5,
+													"stroke-linecap": "round"
+												})
+											)
+							)
+						),
 						h("span", null, [account.tierName, account.native ? "session" : null, account.pinned ? "pinned" : null].filter(Boolean).join(" · ") || "account")
 					),
 					pinned
@@ -861,17 +893,6 @@ window.__ModuleLoader__.load({
 								},
 								"переключить"
 							)
-				),
-				h(
-					"button",
-					{
-						className: "del" + (confirming ? " ask" : ""),
-						onClick: askRemove,
-						disabled: removing,
-						title: account.native ? "аккаунт сессии удалить нельзя" : "удалить аккаунт",
-						"aria-label": "удалить аккаунт"
-					},
-					removing ? "…" : confirming ? "удалить?" : "×"
 				),
 				latencyLine(account, checking, onCheck),
 				!account.ok
