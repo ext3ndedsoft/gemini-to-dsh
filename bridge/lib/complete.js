@@ -23,6 +23,10 @@ export async function handleOnce(req, res, body) {
   const toolCalls = [];
   let finish = 'STOP';
   let usage = null;
+  /** Signature of the whole response: the model signs only its first call. */
+  let groupSignature;
+  /** Calls of this response that still have no signature, awaiting the group's. */
+  let unsigned = [];
   /** An upstream body that died mid-answer: retried, and named in the final error. */
   let interrupted = false;
 
@@ -62,6 +66,8 @@ export async function handleOnce(req, res, body) {
     reasoning = '';
     let timed = false;
     toolCalls.length = 0;
+    groupSignature = undefined;
+    unsigned = [];
 
     try {
       for await (const payload of readSse(upstreamRes.body)) {
@@ -77,13 +83,23 @@ export async function handleOnce(req, res, body) {
         if (candidate.finishReason) finish = candidate.finishReason;
 
         for (const part of (candidate.content && candidate.content.parts) || []) {
+          if (typeof part.thoughtSignature === 'string' && part.thoughtSignature) {
+            if (!groupSignature) groupSignature = part.thoughtSignature;
+            for (const pending of unsigned) {
+              rememberCall(pending.id, groupSignature, pending.name, pending.args);
+            }
+            unsigned = [];
+          }
           if (part.functionCall) {
             const callId = part.functionCall.id || newCallId();
-            rememberCall(callId, part.thoughtSignature, part.functionCall.name);
+            const args = part.functionCall.args || {};
+            const signature = part.thoughtSignature || groupSignature;
+            rememberCall(callId, signature, part.functionCall.name, args);
+            if (!signature) unsigned.push({ id: callId, name: part.functionCall.name, args });
             toolCalls.push({
               id: callId,
               type: 'function',
-              function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) },
+              function: { name: part.functionCall.name, arguments: JSON.stringify(args) },
             });
             continue;
           }

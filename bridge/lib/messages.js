@@ -7,7 +7,7 @@
  * model gets `functionResponse` with the right name instead of a bare string.
  */
 
-import { nameForCall, signatureFor } from './signatures.js';
+import { nameForCall, signatureForCall, PLACEHOLDER_SIGNATURE } from './signatures.js';
 
 export function imagePart(url) {
   if (typeof url !== 'string') return null;
@@ -31,6 +31,12 @@ export function toContents(messages) {
   const system = [];
   const contents = [];
   const pendingResponses = new Map();
+  // Gemini enforces thought signatures for every function call of the current turn,
+  // and the current turn starts at the last real user message.
+  let lastUserIndex = -1;
+  (messages || []).forEach((message, index) => {
+    if (message && message.role === 'user') lastUserIndex = index;
+  });
 
   const flushResponses = () => {
     if (!pendingResponses.size) return;
@@ -38,7 +44,7 @@ export function toContents(messages) {
     pendingResponses.clear();
   };
 
-  for (const message of messages || []) {
+  for (const [messageIndex, message] of (messages || []).entries()) {
     const role = message.role;
     if (role === 'system' || role === 'developer') {
       const text = textOf(message.content);
@@ -78,7 +84,13 @@ export function toContents(messages) {
           args = { raw: String(call.function.arguments) };
         }
         const part = { functionCall: { name: call.function.name, args } };
-        const signature = signatureFor(call.id);
+        // The signature travels with the call, not with its id: a client that
+        // re-minted the id still gets its own signature back by name and arguments.
+        // Without any signature the current turn is refused outright, so the
+        // documented placeholder goes in rather than silence.
+        const signature =
+          signatureForCall(call.id, call.function.name, args) ||
+          (messageIndex > lastUserIndex ? PLACEHOLDER_SIGNATURE : undefined);
         if (signature) part.thoughtSignature = signature;
         parts.push(part);
       }

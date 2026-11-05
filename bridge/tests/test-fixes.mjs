@@ -137,6 +137,44 @@ await test('rotation settings survive a reload', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+console.log('\nthought signatures');
+
+const { rememberCall, signatureForCall, PLACEHOLDER_SIGNATURE } = await import('../lib/signatures.js');
+const { toContents } = await import('../lib/messages.js');
+
+const callPartOf = (built) => built.contents.flatMap((c) => c.parts || []).find((p) => p.functionCall);
+
+await test('a signature is found again after the client rewrote the call id', () => {
+  rememberCall('call_orig', 'SIG-A', 'grep', { pattern: 'x', path: '.' });
+  assert.equal(signatureForCall('call_rewritten', 'grep', '{"path":".","pattern":"x"}'), 'SIG-A');
+});
+
+await test('a replayed call in the current turn never goes out unsigned', () => {
+  const contents = toContents([
+    { role: 'user', content: 'go' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_unknown', type: 'function', function: { name: 'weird_tool', arguments: '{"a":1}' } }] },
+    { role: 'tool', tool_call_id: 'call_unknown', content: 'ok' },
+  ]);
+  assert.equal(callPartOf(contents).thoughtSignature, PLACEHOLDER_SIGNATURE);
+});
+
+await test('an older turn carries its real signature and is not padded', () => {
+  rememberCall('call_old', 'SIG-OLD', 'read', { file: 'a' });
+  const contents = toContents([
+    { role: 'user', content: 'old' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_old', type: 'function', function: { name: 'read', arguments: '{"file":"a"}' } }] },
+    { role: 'tool', tool_call_id: 'call_old', content: 'ok' },
+    { role: 'user', content: 'new' },
+  ]);
+  assert.equal(callPartOf(contents).thoughtSignature, 'SIG-OLD');
+});
+
+await test('an oversized signature stays in memory instead of being dropped', () => {
+  const big = 'S'.repeat(40_000);
+  rememberCall('call_big', big, 'pwsh', { command: 'ls' });
+  assert.equal(signatureForCall('call_big', 'pwsh', { command: 'ls' }).length, 40_000);
+});
+
 console.log('\naccount ranking');
 
 await test('a fast account outranks a slow one with more quota', () => {

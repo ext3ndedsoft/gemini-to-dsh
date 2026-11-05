@@ -46,6 +46,10 @@ export async function handleStream(req, res, body) {
   let finish = null;
   let usage = null;
   let wrote = false;
+  /** Signature of the whole response: the model signs only its first call. */
+  let groupSignature;
+  /** Calls of this response that still have no signature, awaiting the group's. */
+  let unsigned = [];
   /** The upstream body died mid-answer: the turn is incomplete, not finished. */
   let interrupted = false;
 
@@ -94,7 +98,13 @@ export async function handleStream(req, res, body) {
 
   const emitCall = (call) => {
     const callId = call.functionCall.id || newCallId();
-    rememberCall(callId, call.thoughtSignature, call.functionCall.name);
+    const args = call.functionCall.args || {};
+    // Gemini signs only the first call of a parallel group. Since a client may
+    // replay each call on its own, the group's signature is carried by all of
+    // them: the same reasoning covers the whole response.
+    const signature = call.thoughtSignature || groupSignature;
+    rememberCall(callId, signature, call.functionCall.name, args);
+    if (!signature) unsigned.push({ id: callId, name: call.functionCall.name, args });
     startRole();
     callIndex += 1;
     counters.toolCalls += 1;
@@ -106,7 +116,7 @@ export async function handleStream(req, res, body) {
           type: 'function',
           function: {
             name: call.functionCall.name,
-            arguments: JSON.stringify(call.functionCall.args || {}),
+            arguments: JSON.stringify(args),
           },
         },
       ],
@@ -117,6 +127,8 @@ export async function handleStream(req, res, body) {
     const prepared = retryBody(body, attempt);
     const suppressReasoning = Boolean(prepared.__suppressReasoning);
     const splitter = new ThinkingStream();
+    groupSignature = undefined;
+    unsigned = [];
 
     let upstreamRes;
     try {
@@ -162,6 +174,15 @@ export async function handleStream(req, res, body) {
         if (candidate.finishReason) finish = candidate.finishReason;
 
         for (const part of (candidate.content && candidate.content.parts) || []) {
+          // A signature can arrive on its own part, or on a later part than the
+          // call itself. Either way it belongs to every call of this response.
+          if (typeof part.thoughtSignature === 'string' && part.thoughtSignature) {
+            if (!groupSignature) groupSignature = part.thoughtSignature;
+            for (const pending of unsigned) {
+              rememberCall(pending.id, groupSignature, pending.name, pending.args);
+            }
+            unsigned = [];
+          }
           if (part.functionCall) {
             emitCall(part);
             continue;
