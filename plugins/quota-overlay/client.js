@@ -573,7 +573,7 @@ window.__ModuleLoader__.load({
 						{ className: "btn", disabled: busy || !parsed.ok || check?.state === "running", onClick: runCheck },
 						"проверить"
 					),
-					h("button", { className: "btn wide", disabled: busy || !parsed.ok, onClick: save }, "сохранить и включить"),
+					h("button", { className: "btn wide", disabled: busy || !parsed.ok, onClick: save }, "включить"),
 					configured
 						? h(
 								"button",
@@ -893,7 +893,7 @@ window.__ModuleLoader__.load({
 					else if (/location is not supported/i.test(JSON.stringify(res.json || {}))) setNote("geoblocked from this egress");
 					else setNote(((res.json || {}).error || {}).message || "HTTP " + res.status);
 				} catch {
-					setNote("bridge unreachable");
+					setNote("мост не отвечает");
 				}
 				setBusy(false);
 				egress.reload();
@@ -966,9 +966,9 @@ h(Transport, {
 								h(
 									"div",
 									{ className: "foot" },
-									h("button", { className: "btn wide", onClick: addAccount }, "add account"),
-									h("button", { className: "btn", onClick: test, disabled: busy }, busy ? "…" : "test route"),
-									h("button", { className: "btn", onClick: toggle }, "hide")
+									h("button", { className: "btn wide", onClick: addAccount }, "+ аккаунт"),
+									h("button", { className: "btn", onClick: test, disabled: busy }, busy ? "…" : "маршрут"),
+									h("button", { className: "btn", onClick: toggle }, "скрыть")
 								)
 							)
 						)

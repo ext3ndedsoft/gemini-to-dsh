@@ -1,16 +1,25 @@
 /**
- * Builds a static preview of the quota panel for design review.
+ * Builds a static preview of the quota panel for docs and design review.
  *
- * The stylesheet is extracted from `client.js` so the preview cannot drift from what the
- * overlay actually renders; only the markup is mirrored here. Open the result in a browser
- * (or screenshot it headlessly) to check spacing, contrast and the weekly rings.
+ * The stylesheet is extracted from `client.js`, so the preview cannot drift from what the
+ * overlay actually renders; only the markup is mirrored here. Two variants exist because
+ * the transport row has two sub-panels worth looking at: the DNS chips and the proxy field.
  *
- *   node preview/build-preview.mjs
+ *   node preview/build-preview.mjs dns
+ *   node preview/build-preview.mjs proxy
+ *
+ * Then screenshot `preview/preview-<variant>.html` (assets/panel-*.png are made this way).
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const variant = (process.argv[2] || 'dns').toLowerCase();
+if (!['dns', 'proxy'].includes(variant)) {
+  console.error('usage: node preview/build-preview.mjs dns|proxy');
+  process.exit(1);
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const plugin = path.resolve(here, '..', 'plugins', 'quota-overlay', 'client.js');
@@ -38,25 +47,23 @@ function ring(pct, size = 46, bare = false) {
   </svg>${bare ? '' : `<b>${pct}%</b>`}</div>`;
 }
 
-function group(name, weekly, five) {
+function group(name, weekly, five, reset) {
   return `<div class="grp">${ring(weekly)}
     <div class="meta"><b>${name}</b>
-      <span>weekly resets in 6d 22h</span>
+      <span>weekly resets ${reset}</span>
       <span class="badge" style="color:${tone(five)}"><i></i>5h ${five}%</span>
     </div>
   </div>`;
 }
 
 function account({ email, tier, groups, models, pinned }) {
-  return `<div class="card" style="animation-delay:0ms">
+  return `<div class="card">
     <div class="top">
       <span class="dot" style="background:${tone(71)}"></span>
       <div class="who"><b>${email}</b><span>${tier}${pinned ? ' · pinned' : ''}</span></div>
       ${pinned ? '' : '<button class="mini">pin</button>'}
     </div>
-    ${groups
-      .map((g) => group(g.name, g.weekly, g.five))
-      .join('')}
+    ${groups.map((g) => group(g.name, g.weekly, g.five, g.reset || 'in 6d 22h')).join('')}
     <div class="rows">${models
       .map(
         (m) =>
@@ -66,62 +73,92 @@ function account({ email, tier, groups, models, pinned }) {
   </div>`;
 }
 
+const chain = 'bezmezhau › geohideeu › geohide › magicdns › direct';
+const channels = ['bezmezhau', 'geohideeu', 'geohide', 'magicdns'];
+
+const dnsPanel = `<div class="sub">
+  <div class="subhead">выход dns</div>
+  <div class="chips">
+    <button class="chip-btn${variant === 'dns' ? ' on' : ''}">наша цепочка</button>
+    ${channels.map((name) => `<button class="chip-btn">${name}</button>`).join('')}
+  </div>
+  <input class="input" placeholder="свой DNS: 1.2.3.4, 5.6.7.8">
+  <div class="foot"><button class="btn wide" disabled>сохранить свой DNS</button></div>
+  <div class="hint">адреса пишутся в ~/.dsh/ag-egress.json и переживают перезапуск</div>
+</div>`;
+
+const proxyPanel = `<div class="sub">
+  <div class="subhead">выход через прокси</div>
+  <input class="input" value="socks5://someone:secret@10.0.0.7:1080">
+  <div class="parsed ok">понял как: socks5 · 10.0.0.7:1080 · с логином</div>
+  <input class="input" placeholder="запасной прокси — необязательно">
+  <div class="parsed ok">туннель открылся за 214 мс</div>
+  <div class="foot">
+    <button class="btn">проверить</button>
+    <button class="btn wide">сохранить и включить</button>
+    <button class="btn">убрать</button>
+  </div>
+  <div class="hint">адрес пишется в ~/.dsh/ag-egress.json; «проверить» ничего не меняет</div>
+</div>`;
+
+const stateLine =
+  variant === 'dns'
+    ? `<em>${chain}</em>`
+    : `<em>режим dns — прокси включится после сохранения</em>`;
+
 const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>ag-limits preview</title>
+<html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>
 <style>
-  html,body{margin:0;height:100%;background:
-    radial-gradient(80% 60% at 70% 10%,#191926,transparent 60%),
-    radial-gradient(60% 50% at 10% 90%,#121a20,transparent 60%),#08080c;}
-  body{display:grid;place-items:end end;padding:40px;font-family:ui-sans-serif,system-ui}
+  html,body{margin:0;background:
+    radial-gradient(90% 70% at 75% 6%,#1b1b2b,transparent 62%),
+    radial-gradient(70% 60% at 8% 96%,#101a22,transparent 60%),#07070b;}
+  body{padding:18px;font-family:ui-sans-serif,system-ui;display:inline-block}
+  .agq{position:relative}
 ${styles}
+  /* after the real stylesheet, so these win: the panel scrolls in the app, a docs shot shows it whole */
+  .agq .panel{max-height:none}
+  .agq .panel-in{max-height:none}
+  .agq .scroll{max-height:none;overflow:visible;mask-image:none;flex:none}
+  .agq .foot{position:static}
 </style></head>
 <body>
-<div class="agq" style="position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;align-items:flex-end">
+<div class="agq">
   <div class="panel"><div class="panel-in">
     <div class="head">
-      <span class="mark">A</span><h1>Antigravity</h1><span class="chip">AI Pro</span>
+      <span class="mark">A</span><h1>Antigravity</h1><span class="chip">Google AI Pro</span>
       <button class="icon">⟳</button>
     </div>
     <div class="scroll">
-    <div class="seg"><span class="thumb" style="left:calc(3px + 1 * ((100% - 6px) / 4))"></span><button>DNS</button><button class="on">Proxy</button><button>VPN</button><button>Direct</button></div>
-    <div class="state"><span class="dot" style="background:var(--good);box-shadow:0 0 8px var(--good)"></span>
-      <em>dagami › bezmezhau › direct</em></div>
-    <div class="relay">
-      <div class="txt"><b>Relay</b><span>DNS · 132 ok · 0 fail</span></div>
-      <button class="switch on"><i></i></button>
-    </div>
-    <div class="sect">accounts</div>
-    ${account({
-      email: 'someone@example.com',
-      tier: 'AI Pro · session',
-      groups: [
-        { name: 'Gemini Models', weekly: 71, five: 99 },
-        { name: 'Claude and GPT models', weekly: 96, five: 100 }
-      ],
-      models: [
-        { id: 'gemini-3.8-flash-tiered', pct: 99, reset: 'in 3h 44m' },
-        { id: 'claude-opus-4-6-thinking', pct: 100, reset: 'in 7d' },
-        { id: 'gemini-3-flash', pct: 88, reset: 'in 5h 10m' }
-      ]
-    })}
-    ${account({
-      email: 'second@example.com',
-      tier: 'AI Pro',
-      pinned: true,
-      groups: [{ name: 'Gemini Models', weekly: 98, five: 100 }],
-      models: [{ id: 'gemini-3.8-flash-tiered', pct: 100, reset: 'in 6d' }]
-    })}
+      <div class="seg"><span class="thumb" style="left:calc(3px + ${variant === 'dns' ? 0 : 1} * ((100% - 6px) / 4))"></span>
+        <button class="${variant === 'dns' ? 'on' : ''}">DNS</button>
+        <button class="${variant === 'proxy' ? 'on' : ''}">Proxy</button>
+        <button>VPN</button>
+        <button>Direct</button>
+      </div>
+      <div class="state"><span class="dot" style="background:var(--good);box-shadow:0 0 8px var(--good)"></span>${stateLine}</div>
+      ${variant === 'dns' ? dnsPanel : proxyPanel}
+      <div class="relay">
+        <div class="txt"><b>Relay</b><span>${variant === 'dns' ? 'DNS' : 'Proxy'} · 132 ok · 0 fail</span></div>
+        <button class="switch on"><i></i></button>
+      </div>
+      <div class="sect">accounts</div>
+      ${account({
+        email: 'someone@example.com',
+        tier: 'Google AI Pro · session',
+        pinned: true,
+        groups: [{ name: 'Gemini Models', weekly: 71, five: 99, reset: 'in 6d 22h' }],
+        models: [{ id: 'gemini-3.8-flash-tiered', pct: 99, reset: 'in 3h 44m' }]
+      })}
     </div>
     <div class="foot">
-      <button class="btn wide">add account</button>
-      <button class="btn">test route</button>
-      <button class="btn">hide</button>
+      <button class="btn wide">+ аккаунт</button>
+      <button class="btn">маршрут</button>
+      <button class="btn">скрыть</button>
     </div>
   </div></div>
-  <div class="pill">${ring(71, 34, true)}<span><b>71%</b><span class="sub">weekly</span></span></div>
 </div>
 </body></html>`;
 
-const out = path.join(here, 'preview.html');
+const out = path.join(here, `preview-${variant}.html`);
 fs.writeFileSync(out, html);
 console.log('written:', out, `(${html.length} bytes)`);

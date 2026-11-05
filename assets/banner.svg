@@ -1,30 +1,57 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220" viewBox="0 0 900 220" role="img" aria-label="gemini-to-dsh - Gemini 3.x Flash inside DeepSeek Harness">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="230" viewBox="0 0 900 230" role="img" aria-label="Gemini — в DeepSeek Harness">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b0f17"/>
-      <stop offset="55%" stop-color="#121826"/>
-      <stop offset="100%" stop-color="#0b0f17"/>
+      <stop offset="0%" stop-color="#0a0a11"/>
+      <stop offset="52%" stop-color="#101018"/>
+      <stop offset="100%" stop-color="#0a0a11"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#4d8dff"/>
-      <stop offset="50%" stop-color="#7c6cff"/>
-      <stop offset="100%" stop-color="#31d0aa"/>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="55%" stop-color="#5b8cff"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
     </linearGradient>
     <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#c9d6ff"/>
+      <stop offset="100%" stop-color="#c6d2ff"/>
     </linearGradient>
+    <radialGradient id="glowA" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity=".38"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity=".26"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#ffffff" fill-opacity=".035"/>
+    </pattern>
   </defs>
 
-  <rect width="900" height="220" rx="18" fill="url(#bg)"/>
-  <rect x="1" y="1" width="898" height="218" rx="17" fill="none" stroke="#263042" stroke-width="2"/>
-  <rect x="0" y="0" width="900" height="5" rx="2.5" fill="url(#accent)"/>
+  <rect width="900" height="230" rx="20" fill="url(#bg)"/>
+  <rect width="900" height="230" rx="20" fill="url(#dots)"/>
+  <ellipse cx="770" cy="18" rx="240" ry="130" fill="url(#glowA)"/>
+  <ellipse cx="120" cy="215" rx="230" ry="120" fill="url(#glowB)"/>
+
+  <rect x="1.25" y="1.25" width="897.5" height="227.5" rx="19" fill="none" stroke="#ffffff" stroke-opacity=".09" stroke-width="1.5"/>
+  <path d="M20 1.25h860" stroke="url(#edge)" stroke-width="3" stroke-linecap="round"/>
 
   <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
-    <text x="48" y="96" font-size="62" font-weight="800" letter-spacing="-1.5" fill="url(#title)">gemini-to-dsh</text>
-    <text x="50" y="136" font-size="25" font-weight="500" fill="#9fb0c9">Gemini 3.x Flash inside DeepSeek Harness</text>
-    <text x="50" y="176" font-size="17" font-weight="400" fill="#6b7c93" letter-spacing="0.3">OpenAI-compatible bridge  ·  scoped egress for blocked networks  ·  web search  ·  quota overlay</text>
-    <circle cx="857" cy="52" r="7" fill="#31d0aa"/>
-    <text x="845" y="58" font-size="13" text-anchor="end" fill="#3f4c60">v1.0.0</text>
+    <text x="48" y="104" font-size="44" font-weight="800" letter-spacing="-1.1" fill="url(#title)">Gemini — в DeepSeek Harness</text>
+    <text x="49" y="140" font-size="18" font-weight="500" fill="#9fb0c9">Gemini 3.x Flash внутри DSH — и в любом клиенте, который говорит на OpenAI</text>
+
+    <g font-size="13" font-weight="500">
+      <rect x="48" y="166" width="176" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
+      <text x="136" y="186" text-anchor="middle" fill="#c9d2e3">свой выход в сеть</text>
+
+      <rect x="236" y="166" width="150" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
+      <text x="311" y="186" text-anchor="middle" fill="#c9d2e3">квота в двух окнах</text>
+
+      <rect x="398" y="166" width="112" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
+      <text x="454" y="186" text-anchor="middle" fill="#c9d2e3">веб-поиск</text>
+
+      <rect x="522" y="166" width="150" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
+      <text x="597" y="186" text-anchor="middle" fill="#c9d2e3">без зависимостей</text>
+    </g>
+
   </g>
 </svg>

@@ -1,9 +1,8 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="gemini-to-dsh — Gemini 3.x Flash inside DeepSeek Harness" width="900">
+  <img src="assets/banner.svg" alt="Gemini — inside DeepSeek Harness" width="900">
 </p>
 
 <p align="center">
-  <a href="https://github.com/ext3ndedsoft/gemini-to-dsh/releases"><img src="https://img.shields.io/github/v/release/ext3ndedsoft/gemini-to-dsh?style=for-the-badge&color=4d8dff&labelColor=0b0f17" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/NODE-%E2%89%A520-7c6cff?style=for-the-badge&labelColor=0b0f17&logo=nodedotjs&logoColor=white" alt="Node 20+">
   <img src="https://img.shields.io/badge/DEPENDENCIES-NONE-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="No dependencies">
@@ -13,9 +12,9 @@
   <a href="README.md">Русский</a> · <b>English</b>
 </p>
 
-An OpenAI-compatible bridge that puts **Gemini 3.x Flash** inside [DSH](https://github.com/deepseek-ai/deepseek-harness) — or any other OpenAI-speaking client — including a region-agnostic egress layer for networks where Google is not directly reachable, a web-search plugin with real caching, and a quota overlay.
+A bridge that puts **Gemini 3.x Flash** inside [DSH](https://github.com/deepseek-ai/deepseek-harness) — or any client that speaks OpenAI. It ships with an egress layer for networks where Google is blocked, a web-search plugin with a real cache, and a panel for quotas and transport.
 
-No dependencies. Node 20+. Two loopback ports.
+No dependencies, Node 20+, two loopback ports.
 
 ```text
 DSH / any OpenAI client
@@ -30,37 +29,42 @@ DSH / any OpenAI client
 smart-DNS relay edge ──► Google Cloud Code ──► Gemini
 ```
 
+<p align="center">
+  <img src="assets/panel-dns.png" alt="Panel: DNS mode with channels and chain" width="384">
+  <img src="assets/panel-proxy.png" alt="Panel: Proxy mode with address and tunnel check" width="384">
+</p>
+
 ## Why this exists
 
-Gemini's Antigravity model is not exposed as an ordinary public API. It is served through Google's Cloud Code transport, which speaks a different protocol, uses its own OAuth flow, and resolves to hostnames that are blocked outright in some countries. DSH, meanwhile, speaks OpenAI.
+The Antigravity model is not offered through the public API. It lives inside Cloud Code: a different protocol, its own OAuth, hosts that some countries block outright. DSH, meanwhile, speaks OpenAI.
 
-This project is the missing adapter, plus everything needed to keep that adapter alive on a hostile network: a channel router with a watchdog, a quota view across several accounts, and a search tool that does not fall over after three queries.
+This is that adapter, plus everything needed to keep it alive on a hostile network: channel routing with a watchdog, quotas across several accounts, and search that does not die on the third request.
 
-## What you actually get
+## What it actually gives you
 
-**A real OpenAI surface, not a thin proxy.**
-Streaming and non-streaming, tools with `tool_choice` (`auto` / `none` / `required` / specific function), image parts, `reasoning_content` for thinking, and a usage block that reports cached prompt tokens — the number that tells you whether the prompt cache is working at all.
+**The whole OpenAI surface, not a thin proxy.**
+Streaming and plain replies, tools with `tool_choice` (`auto` / `none` / `required` / a named function), images, `reasoning_content`, and a usage block that reports cached prompt tokens — so you can see whether caching works at all.
 
-**Streaming that looks like typing, not like loading.**
-Upstream hands over ~25 tokens every ~300 ms. Passing those through renders an answer in lumps, so the bridge re-cuts each arrival into small deltas at a steady cadence (`30 ms`, `AG_PACE_MS`). Reasoning is emitted the instant it arrives instead of being held until the end of the turn.
+**Streaming that reads like typing, not like a download.**
+Google hands over ~25 tokens every ~300 ms; passed through as-is, text arrives in slabs. The bridge splits each chunk into small deltas with an even beat (`30 ms`, `AG_PACE_MS`). Reasoning is forwarded immediately instead of being held back until the end.
 
-**Honest failure semantics.**
-A rejected request is returned once, not retried three times into the same wall — only `429` and `5xx` are worth a second attempt, so only those are retried. `finish_reason` distinguishes `length` (truncated), `tool_calls`, and `stop` instead of always claiming `stop`.
+**Honest errors.**
+A refused request comes back once instead of being hammered three times against the same wall — retrying only makes sense for `429` and `5xx`. `finish_reason` distinguishes `length`, `tool_calls` and `stop` instead of always claiming `stop`.
 
-**Effort mapping that behaves monotonically.**
-`reasoning_effort` maps to Google's thinking budget, measured: minimal → 0 reasoning tokens, medium → ~220, high → ~300–550. Note the interaction with `max_tokens`: with a small ceiling every level collapses, because the thinking budget reserves its own headroom first.
+**Several accounts, switched by what is left.**
+Requests go to accounts ordered by the **five-hour window** — the one that ends a session. A pinned account keeps priority only while it has more than 5% of that window left: at five percent it stops being first and the request goes where the window is fuller. That is the seamless switch, made before the `429` rather than after it.
 
-**Several accounts, one endpoint.**
-Requests rotate across the accounts you have stored; `/accounts` and `/limits` show the e-mails and the per-model quota left. One dead account does not take the bridge down.
+**An egress layer that survives its own channels.**
+Where Google is blocked, the bridge goes through smart-DNS relays: the resolver returns an edge address, TCP goes there, SNI stays Google's, and the real certificate is verified end to end. Channels are tried in a chain, and every two minutes the watchdog probes the live one with **a real response**, not just a handshake: a relay happily accepts TCP forever and never finishes TLS, and that is exactly how one channel died silently for three hours. Two failures and the route moves to the next channel that passed the same probe.
 
-**An egress layer that survives its own channels dying.**
-Where Google is blocked, the bridge connects through smart-DNS relays: the resolver hands out a relay edge, TCP goes there, the SNI stays Google's, and the real certificate is verified end to end. Channels are tried in a chain, and a watchdog probes the live channel with an actual TLS handshake every two minutes — because a relay can accept TCP forever and never complete TLS, which is exactly how one died silently for three hours. Two failed probes switch the route to the next channel that passes the same probe. Probes are bounded at 6 seconds so a dead resolver cannot stretch the verdict into a minute and a half. **Requests never wait for the watchdog**: it has its own socket and its own timer.
+**A panel that controls, not merely displays.**
+The transport is switched from the panel, and each mode reveals what it needs: `DNS` shows a chip per channel, the chain chip and a field for your own resolver; `Proxy` shows the address (a link, with credentials, or just `host:port`), a fallback and a `check` button that opens a tunnel and **saves nothing**. Every click is one `POST` to the shim; the panel keeps no state of its own and renders what the shim answered.
 
-**Web search that does not get throttled into uselessness.**
-A DSH plugin that registers a `web_search` provider: keyed APIs (Serper, Tavily, Brave, Google CSE, Exa) first, DuckDuckGo behind them, ScraperAPI's Google endpoint as the paid last resort — all behind a 10-minute cache, single-flight, a token bucket, a challenge detector and a 90-second cooldown. The free path settles around 7-8 queries a minute (a burst of two, then one per eight seconds); the plugin is built around that ceiling instead of pretending it is not there.
+**Web search that is not throttled into uselessness.**
+A DSH plugin registering a `web_search` provider: keyed APIs first (Serper, Tavily, Brave, Google CSE, Exa), DuckDuckGo last — behind a 10-minute cache, a single-flight guard, a token bucket, a challenge detector and a 90-second cooldown. The free path holds about 7–8 requests per minute.
 
-**Quota on both windows, and a transport switch.**
-The panel shows both Google quotas per account — the five-hour one and the **weekly** one — as a ring with the percentage left and a reset countdown, per group ("Gemini Models", "Claude and GPT models"). Next to it, the transport: DNS, Proxy, VPN or Direct, with one honest line of state instead of an intention. Plus `lean-context`, which trims old tool results so long sessions do not drown in their own history.
+**Quotas in two windows.**
+Per account the panel shows both Google quotas: the five-hour and the **weekly** one — a ring with a percentage and a reset timer, per group ("Gemini Models", "Claude and GPT models"). Plus `lean-context`, which trims old tool results so long sessions do not drown in their own history.
 
 ## Quick start
 
@@ -72,25 +76,29 @@ cd gemini-to-dsh
 node install.mjs
 ```
 
-Installs the bridge into `~/.dsh/bridge`, the quota panel into the DSH profile, and appends the
-plugin entry to `cordis.patch.yml` without touching what is already there. Running it twice
-duplicates nothing; only credentials are left. Step by step, by hand:
-[docs/plugin-install.md](docs/plugin-install.md).
+Installs the bridge into `~/.dsh/bridge`, the quota panel into the DSH profile, and appends it to `cordis.patch.yml` without touching what is already there. Re-running duplicates nothing. Only credentials are left. Step by step, if you prefer doing it by hand: [docs/plugin-install.md](docs/plugin-install.md).
 
-### If Google is reachable from your network
+### Accounts
+
+The bridge reuses the OAuth tokens your Google AI Pro subscription already created on the machine (that is Cloud Code access, not a free-tier key). Put them where the bridge expects them — `~/.gemini/oauth_creds.json` for the first account and `~/.gemini/dsh-bridge/accounts.json` for a rotation set — or point `AG_CREDS_FILE` / `AG_ACCOUNTS_FILE` elsewhere. The OAuth client used to refresh them is **not** in this repository: set `AG_CLIENT_ID` and `AG_CLIENT_SECRET`, or keep them in `~/.dsh/ag-oauth.json`.
 
 ```bash
-git clone https://github.com/<you>/gemini-to-dsh.git
-cd gemini-to-dsh
+cd bridge && node bridge.js
+curl -s localhost:8787/limits -H 'authorization: Bearer local-bridge' | head
+```
+
+### If Google is reachable directly
+
+```bash
 AG_EGRESS=0 ./start.sh          # macOS / Linux
 # or: set "AG_EGRESS=0" && bridge\start.cmd     (Windows)
 ```
 
-`AG_EGRESS=0` skips the shim entirely — no extra hop, no channel config, nothing to tune.
+`AG_EGRESS=0` does not start the shim at all — no extra hop, no channel setup.
 
 ### If it is not
 
-Run without that variable. The default channel chain (`bezmezhau → geohideeu → geohide → magicdns → direct`) is compiled in, so the first run works as-is; channels die over time, which is what the watchdog is for. See [docs/channels.md](docs/channels.md) for adding your own:
+Start without that variable. The default chain (`bezmezhau → geohideeu → geohide → magicdns → direct`) is baked into the defaults, so the first run works as is; channels die over time, which is what the watchdog is for. Add your own from the panel (`свой DNS`) or from a terminal:
 
 ```bash
 cd bridge
@@ -99,18 +107,9 @@ node egress-ctl.mjs use mydns
 node egress-ctl.mjs check mydns
 ```
 
-### Accounts
+## Connecting to DSH
 
-The bridge reuses the OAuth tokens that a Google AI Pro subscription already produced on the machine (Cloud Code entitlement, not a free-tier key). Store them where the bridge expects them — `~/.gemini/oauth_creds.json` for the first account, `~/.gemini/dsh-bridge/accounts.json` for the rotation set — or point `AG_CREDS_FILE` / `AG_ACCOUNTS_FILE` somewhere else. The OAuth client needed to refresh those tokens is **not** part of this repository: set `AG_CLIENT_ID` and `AG_CLIENT_SECRET`, or put them in `~/.dsh/ag-oauth.json`.
-
-```bash
-cd bridge && node bridge.js
-curl -s localhost:8787/limits -H 'authorization: Bearer local-bridge' | head
-```
-
-## Wiring it into DSH
-
-Point a provider at the loopback port. Minimal profile patch:
+The provider points at the local port. Minimal profile patch:
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml
@@ -121,70 +120,74 @@ Point a provider at the loopback port. Minimal profile patch:
     reasoningEffort: medium
 ```
 
-The bridge accepts any `Authorization` value that matches `AG_BRIDGE_SECRET` (default `local-bridge`), so the provider entry just needs that bearer.
+The bridge accepts any `Authorization` equal to `AG_BRIDGE_SECRET` (default `local-bridge`), so the provider entry needs exactly that bearer.
 
-## Images
+## Transport modes
 
-Every model in the harness can draw — in plain words, no command. "Draw a cat" goes to `gemini-3.1-flash-image` even when the profile is set to a text model: the bridge reads the last user message and, if it asks for a picture, swaps in the image model itself. Nothing to select in DSH.
-
-The answer comes back as a path: the picture lands in `~/.dsh/images/` and the text carries `![generated image](path)`, which DSH renders. If the model stays silent there is still a "Generated an image." line, because an empty answer is indistinguishable from a broken one.
-
-What routes to image generation:
-
-- verb plus subject — "draw a fox", "generate an image of a lighthouse", "make a cyberpunk poster", «нарисуй кота»;
-- editing an existing picture — attach it and say "redraw this in watercolor".
-
-What does not: "what is in this picture", "describe the photo", «проанализируй изображение» — that is reading, and it stays with the ordinary model, which already sees images.
-
-Three knobs: `AG_IMAGE_MODEL` picks the model, `AG_IMAGE_DIR` the folder, `AG_IMAGE_AUTO=0` turns the word routing off so only the model name counts. Details and how to swap the provider — [docs/images.md](docs/images.md).
-
-## Quota and transports
-
-**Two windows.** Google meters Cloud Code on a five-hour window and a weekly one at the same time. The panel shows both: weekly as a ring (that is the one that ends the week early and does not come back in a couple of hours), five-hour as a `5H` badge underneath. Where those numbers come from, and why an ordinary client never saw the weekly one — [docs/quotas.md](docs/quotas.md).
-
-**Four transport modes.** The switch in the panel changes how traffic leaves the machine:
+The panel switch changes how traffic leaves the machine:
 
 | Mode | What the shim does |
 | --- | --- |
-| `DNS` | connects to a smart-DNS relay from `route` / `routeChain`; SNI and certificate stay Google's |
-| `Proxy` | CONNECT to `proxy`, then `fallbackProxy` |
-| `VPN` | nothing: traffic already leaves through a tunnel, the shim only checks that it is up |
-| `Direct` | nothing: no relaying at all |
+| `DNS` | goes to a smart-DNS relay from `route` / `routeChain`, Google SNI and certificate |
+| `Proxy` | CONNECT through `proxy`, then `fallbackProxy` |
+| `VPN` | nothing: traffic already leaves through the tunnel, the shim only verifies it is up |
+| `Direct` | nothing: no relays at all |
 
-The mode is an explicit `mode` field in `~/.dsh/ag-egress.json`, not a side effect of whichever fields happen to be set. It is also settable from the panel, which is the point: each mode reveals what it needs — DNS shows a chip per channel, the chain chip and a field for your own resolver, Proxy shows the address, the fallback and a remove button — and every click is one `POST` to the shim. The panel renders what the shim reports and never keeps its own copy, and the proxy field is never prefilled with the masked value, so saving an empty field keeps the address you already have. Older files without a mode are read from the same fields as before. Which one fits your network, and how to switch from a terminal — [docs/transports.md](docs/transports.md).
+The mode is an explicit `mode` field in `~/.dsh/ag-egress.json`, not a side effect of whichever fields happen to be set. Older files without a mode are read from the same fields as before.
 
-**The panel is a plugin.** Step by step, from an empty machine to a working panel: [docs/plugin-install.md](docs/plugin-install.md).
+A few rules worth knowing, because they change behaviour:
+
+- **`direct` is never promoted by the watchdog.** It is not a relay but the absence of one: putting it at the head of the chain silently disables relaying.
+- **A failed probe is not only a failed TCP connect.** If the answer after the handshake is a regional refusal, the channel counts as dead: the transport works, the route is useless.
+- **One probe serves everybody.** The watchdog, `/bench` and `/watchdog` share a sample for 30 seconds (`AG_PROBE_TTL_MS`) instead of paying three times.
+- **A dead first leg does not slow requests down.** A channel that failed in the last two minutes (`AG_FAILURE_MEMORY_MS`) is tried after the live ones — before the next watchdog beat.
+- **A network change drops the caches.** An external IPv4 appears or disappears, and every measurement was about a different network.
+
+The proxy field accepts `host:port`, `http://user:pass@host:port`, `socks5://host:port` and `socks5h://` (remote DNS). A foreign scheme such as `ftp://` is refused rather than read as HTTP: an address that "saved" but goes elsewhere is worse than a clear refusal. Under the field you can see what was understood, and `check` opens a tunnel without writing anything.
+
+The panel does not poll the shim, it listens: `GET /events` streams the same document as `GET /`, and a frame is sent only when something changed. An idle panel costs nothing.
+
+Details, scripts and "which mode fits my network" — [docs/transports.md](docs/transports.md). Quotas — [docs/quotas.md](docs/quotas.md).
+
+## Images
+
+Any model in the harness can draw — in words, no commands. "Draw a cat" goes to `gemini-3.1-flash-image` even when the profile names a text model: the bridge looks at the last user message and, if it asks for a picture, substitutes the right model itself.
+
+The answer arrives as a file path: the image lands in `~/.dsh/images/` and the text gets `![generated image](path)`, which DSH renders. If the model stayed silent you still get "Generated an image." — an empty reply is indistinguishable from a broken one.
+
+What routes to drawing: a verb plus a subject ("draw a cat", "generate an image of a sunset"), or editing an attached picture ("repaint this in watercolor"). What does not: "what is in this picture", "describe the photo" — that is reading, and it stays with the ordinary model. Three knobs: `AG_IMAGE_MODEL`, `AG_IMAGE_DIR`, `AG_IMAGE_AUTO=0`. Details — [docs/images.md](docs/images.md).
 
 ## Configuration
 
-Everything is env-first; the [`.env.example`](.env.example) lists every variable the bridge itself reads, with its default in a comment. (The plugins read a few of their own — `AG_BRIDGE_URL`, `AG_EGRESS_URL`, `WARP_CLI` — documented in each plugin's README.) The ones that matter most:
+Everything is environment variables; the full list with defaults is in [`.env.example`](.env.example). The main ones:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `AG_BRIDGE_PORT` | `8787` | OpenAI-compatible port |
-| `AG_BRIDGE_SECRET` | `local-bridge` | Bearer token the bridge accepts |
-| `AG_EGRESS` | `1` | `0` disables the shim completely |
+| `AG_BRIDGE_PORT` | `8787` | OpenAI-compatible API port |
+| `AG_BRIDGE_SECRET` | `local-bridge` | Bearer the bridge accepts |
+| `AG_EGRESS` | `1` | `0` disables the shim entirely |
 | `AG_EGRESS_PORT` | `8789` | CONNECT shim port |
-| `AG_EGRESS_FILE` | `~/.dsh/ag-egress.json` | Routing config; defaults are compiled in |
+| `AG_EGRESS_FILE` | `~/.dsh/ag-egress.json` | Routing config; defaults are baked in |
 | `AG_EGRESS_DNS_TTL` | `60000` | Resolver answer cache |
-| `AG_EGRESS_BUDGET` | `6000` | Total budget for one CONNECT, all channels |
+| `AG_EGRESS_BUDGET` | `6000` | Budget for one CONNECT across all channels |
 | `AG_WATCHDOG_MS` | `120000` | Watchdog interval |
-| `AG_PACE_MS` | `30` | Text drip cadence; `AG_PACE=0` disables |
-| `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Which model draws pictures |
-| `AG_IMAGE_DIR` | `~/.dsh/images` | Where generated files land |
-| `AG_IMAGE_AUTO` | `1` | `0` stops routing plain words to drawing |
+| `AG_PROBE_TTL_MS` | `30000` | How long one channel sample lives |
+| `AG_EXHAUSTED_AT` | `0.05` | Threshold where the pin stops being first |
+| `AG_PACE_MS` | `30` | Text pacing; `AG_PACE=0` disables |
+| `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Model that draws |
+| `AG_UPSTREAM_TIMEOUT_MS` | `20000` | How long upstream may stay silent |
+| `AG_HUB_VERSION` | `2.26.0` | `hub` identity version, below which Google withholds some quota groups |
 | `AG_CLIENT_ID` / `AG_CLIENT_SECRET` | — | OAuth client for token refresh |
-| `DSH_SEARCH_CONFIG` | `~/.dsh/search.json` | Keys for the search plugin |
 
 ## Plugins
 
 | Plugin | What it does |
 | --- | --- |
-| [`web-search`](plugins/web-search/README.md) | `web_search` provider: keyed APIs → DuckDuckGo, cached and paced |
-| [`quota-overlay`](plugins/quota-overlay/README.md) | Panel: accounts, weekly and five-hour quota, transport mode |
-| [`lean-context`](plugins/lean-context/README.md) | Replaces old tool results so long sessions stay cheap |
+| [`quota-overlay`](plugins/quota-overlay/README.md) | Panel: accounts, weekly and five-hour quotas, transport mode and its settings |
+| [`web-search`](plugins/web-search/README.md) | `web_search` provider: keyed APIs → DuckDuckGo, with cache and pacing |
+| [`lean-context`](plugins/lean-context/README.md) | Replaces old tool results so sessions stay cheap |
 
-Install by dropping the folder into `~/.dsh/profiles/web/plugins/` and adding one line to the profile patch:
+`install.mjs` sets up the first one. For the rest, drop the folder into `~/.dsh/profiles/web/plugins/` and add a line to the profile patch:
 
 ```yaml
 - insert:
@@ -192,25 +195,25 @@ Install by dropping the folder into `~/.dsh/profiles/web/plugins/` and adding on
       name: "./plugins/web-search/index.js"
 ```
 
-## Testing
+## Tests
 
 ```bash
 cd bridge
-npm test            # unit + egress + integration
-npm run smoke       # four calls (models, text, tools, stream); needs the bridge running
+npm test            # unit + egress + modes + integration
+npm run smoke       # four requests (models, text, tools, stream); needs a running bridge
 ```
 
-The unit and integration suites are self-contained: they spin up a mock Cloud Code server, so a failing test means code, not network. The egress suite is different by nature — it opens real TLS connections to verify that `probeChannel` distinguishes a working channel from a dead one, so it needs outbound network and will not run in an air-gapped CI.
+The unit and integration suites are self-contained: they start a mock Cloud Code, so a failing test means code, not network. Egress is different — it opens real TLS connections to check that `probeChannel` tells a live channel from a dead one, so it needs outbound network and will not pass in an isolated CI.
 
-## Honest limitations
+## Honest limits
 
-- **Unofficial transport.** Cloud Code is not a public API; Google changes it without notice and one day this bridge will need a patch. Your account, your risk, your subscription.
-- **Throughput is model-bound.** Wall-clock measurements on the raw stream: `gemini-3.8-flash` runs at 85–140 tokens/s (the `-tiered` variant sits at the top, ~140), `gemini-3-flash` at ~230. The spread within one model is the backend and the length of the unbroken stream: a short answer is dragged down by its first token, a long turn approaches peak. The route does not matter — four channels and a direct fallback give the same number. Client counters such as DSH's can read higher because they include reasoning tokens and tool-call JSON.
-- **`gemini-3.8-flash` may only exist as the `-tiered` variant** on some plans; the alias resolves it for you.
-- **Reasoning arrives in two large blocks** upstream, so it cannot be paced without delaying the answer. Text is smooth; thinking is chunky.
-- **Egress relays are somebody else's infrastructure.** They see SNI and volume, never TLS content. They also die without warning.
-- **Windows-first tooling**: `start.cmd` and `install-autostart.ps1` are Windows; `start.sh` covers macOS/Linux, but the autostart path does not.
+- **Unofficial transport.** Cloud Code is not a public API; Google changes it without notice, and one day the bridge will need a patch. Your account, your risk, your subscription.
+- **Speed is the model's.** Measured on the raw stream: `gemini-3.8-flash` 85–140 tokens/s (`-tiered` is consistently higher, ~140), `gemini-3-flash` ~230. The route does not matter: four channels and direct give the same number. Client counters like DSH's may show more — they include reasoning tokens and tool-call JSON.
+- **`gemini-3.8-flash` exists only as `-tiered` on some plans**; the alias resolves that itself.
+- **Reasoning arrives in two large blocks**, so it cannot be smoothed without delaying the answer. Text is smooth, thinking is chunky.
+- **Relays are someone else's infrastructure.** They see SNI and volume, not TLS content. And they die without notice.
+- **The tooling leans Windows**: `start.cmd` and `install-autostart.ps1` are Windows; `start.sh` covers macOS/Linux, but autostart does not.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Not affiliated with Google; Gemini and Antigravity are Google's, and this project ships none of their code.
+MIT — see [LICENSE](LICENSE). Not affiliated with Google; Gemini and Antigravity belong to Google, none of their code is distributed here.

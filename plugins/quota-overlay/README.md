@@ -4,7 +4,8 @@ A quota panel for the DSH shell: every account, both Google windows, and the tra
 in one card in the corner. No chat commands; every action is a button.
 
 <p align="center">
-  <img src="../../assets/panel-preview.png" alt="quota panel" width="360">
+  <img src="../../assets/panel-dns.png" alt="quota panel, DNS mode" width="360">
+  <img src="../../assets/panel-proxy.png" alt="quota panel, Proxy mode" width="360">
 </p>
 
 ## What it shows
@@ -88,4 +89,4 @@ node preview/build-preview.mjs   # writes preview/preview.html from the same CSS
 ```
 
 That file exists so spacing and contrast can be checked in a plain browser instead of guessing in
-the dark. `assets/panel-preview.png` is a screenshot of it.
+the dark. `assets/panel-dns.png` and `assets/panel-proxy.png` are screenshots of it, built by `preview/build-preview.mjs`.
