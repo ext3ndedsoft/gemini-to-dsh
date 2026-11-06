@@ -490,8 +490,16 @@ export function orderedAccounts(model) {
     // The pin means "prefer this one", not "burn this one to zero while another
     // account sits above the floor". With the guard off, the pin simply wins.
     const floor = rotation.enabled && mine && mine.fiveHour !== null && mine.fiveHour <= rotation.threshold;
-    if (index > 0 && !floor) ordered.unshift(...ordered.splice(index, 1));
-    else if (index > 0) log(`accounts: ${pinned} is at ${Math.round(mine.fiveHour * 100)}% of its 5h window, not promoting it`);
+    // A pinned account that is cooling is not a preference, it is a wall: promoting
+    // it puts a guaranteed failure in front of a pool that could have answered.
+    if (index > 0 && !floor && !(mine && mine.cooling)) ordered.unshift(...ordered.splice(index, 1));
+    else if (index > 0) {
+      log(
+        mine && mine.cooling
+          ? `accounts: ${pinned} is cooling, keeping it in the queue`
+          : `accounts: ${pinned} is at ${Math.round((mine?.fiveHour ?? 0) * 100)}% of its 5h window, not promoting it`,
+      );
+    }
   }
   return ordered;
 }
@@ -668,6 +676,12 @@ export function removeAccount(id) {
   current.accounts.splice(index, 1);
   if (current.pinned === id) current.pinned = null;
   modelsCache.delete(id);
+  // The account is gone, its cooldowns and readings are not: every later save would
+  // write them back to disk for an account nobody can select any more.
+  clearCooldowns(id);
+  quotaSummaryCache.delete(id);
+  latencies.delete(id);
+  requestCounts.delete(id);
   saveStore();
   return true;
 }

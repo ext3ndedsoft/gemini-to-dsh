@@ -215,5 +215,77 @@ await test('AG_THINKING_DEFAULT lowers the cost without touching the client', ()
   }
 });
 
+console.log('\nreview fixes');
+
+await test('a cooling account is not promoted by a pin', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-pin-'));
+  const file = path.join(dir, 'accounts.json');
+  const creds = path.join(dir, 'oauth_creds.json');
+  fs.writeFileSync(creds, JSON.stringify({ access_token: 'fake', refresh_token: 'fake', expiry_date: Date.now() + 3600e3 }));
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: [
+        { id: 'pinned-one', email: 'a@example.com', refresh_token: 'fake' },
+        { id: 'healthy-one', email: 'b@example.com', refresh_token: 'fake' },
+      ],
+      pinned: 'pinned-one',
+      rotation: { enabled: true, threshold: 0.05 },
+      cooldowns: { 'pinned-one|gemini-3.8-flash': Date.now() + 600_000 },
+    })
+  );
+  const script = `
+    process.env.AG_ACCOUNTS_FILE = ${JSON.stringify(file)};
+    process.env.AG_CREDS_FILE = ${JSON.stringify(creds)};
+    const mod = await import(${JSON.stringify(pathToFileURL(path.join(here, '..', 'accounts.js')).href)});
+    const order = mod.orderedAccounts('gemini-3.8-flash').map((acc) => acc.id);
+    console.log(JSON.stringify(order));
+  `;
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+    // The module logs while it works, so the answer is the last line of stdout.
+    const order = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(order[order.length - 1], 'pinned-one', `order ${JSON.stringify(order)}`);
+    assert.ok(order.indexOf('pinned-one') > order.indexOf('healthy-one'), `order ${JSON.stringify(order)}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('the argument index is evicted with its entry, not kept forever', async () => {
+  const { rememberCall, signatureForCall } = await import('../lib/signatures.js');
+  rememberCall('call_first_review', 'SIG-FIRST', 'grep', { marker: 'first-review-call' });
+  for (let i = 0; i < 5000; i += 1) rememberCall(`call_fill_${i}`, 'FILL-SIG', 'fill', { i });
+  assert.equal(signatureForCall('call_first_review', 'grep', { marker: 'first-review-call' }), undefined);
+  assert.equal(signatureForCall('call_fill_4999', 'fill', { i: 4999 }), 'FILL-SIG');
+});
+
+await test('allOf keeps the properties of every branch', async () => {
+  const { toGeminiSchema } = await import('../lib/schema.js');
+  const merged = toGeminiSchema({
+    allOf: [
+      { properties: { a: { type: 'string' } }, required: ['a'] },
+      { properties: { b: { type: 'number' } }, required: ['b'] },
+    ],
+  });
+  assert.deepEqual(Object.keys(merged.properties).sort(), ['a', 'b']);
+  assert.deepEqual([...merged.required].sort(), ['a', 'b']);
+  assert.equal(merged.type, 'OBJECT');
+});
+
+await test('a json_schema response format reaches upstream as a Gemini schema', async () => {
+  const { buildRequest } = await import('../lib/upstream.js');
+  const built = buildRequest({
+    model: 'gemini-3.8-flash',
+    messages: [{ role: 'user', content: 'x' }],
+    response_format: {
+      type: 'json_schema',
+      json_schema: { schema: { type: 'object', properties: { ok: { type: 'boolean' } } } },
+    },
+  });
+  assert.equal(built.request.generationConfig.responseMimeType, 'application/json');
+  assert.equal(built.request.generationConfig.responseSchema.type, 'OBJECT');
+});
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exitCode = failed ? 1 : 0;

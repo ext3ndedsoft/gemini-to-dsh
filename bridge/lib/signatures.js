@@ -144,7 +144,15 @@ export function rememberCall(id, signature, name, argsOrText) {
   };
   calls.set(id, entry);
   if (key) byArgs.set(key, id);
-  while (calls.size > MAX_ENTRIES) calls.delete(calls.keys().next().value);
+  // The index has to die with the entry it points at, otherwise it keeps a key for
+  // every call this process ever saw and outgrows the map it is supposed to serve.
+  while (calls.size > MAX_ENTRIES) {
+    const oldest = calls.keys().next().value;
+    const evicted = calls.get(oldest);
+    if (evicted && evicted.name && evicted.h) byArgs.delete(`${evicted.name}|${evicted.h}`);
+    calls.delete(oldest);
+  }
+  while (byArgs.size > MAX_ENTRIES) byArgs.delete(byArgs.keys().next().value);
   if (usable) dirty = true;
 }
 

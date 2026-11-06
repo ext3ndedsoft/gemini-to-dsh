@@ -68,7 +68,23 @@ export function toGeminiSchema(schema) {
     return withOuterDescription(toGeminiSchema(nonNull || schema.oneOf[0]), schema);
   }
   if (Array.isArray(schema.allOf) && schema.allOf.length) {
-    return withOuterDescription(toGeminiSchema(Object.assign({}, ...schema.allOf)), schema);
+    // A plain Object.assign would keep only the last branch's `properties` and
+    // `required`, silently dropping every field declared by the earlier ones.
+    const merged = {};
+    const properties = {};
+    const required = [];
+    for (const branch of schema.allOf) {
+      if (!branch || typeof branch !== 'object') continue;
+      Object.assign(properties, branch.properties || {});
+      if (Array.isArray(branch.required)) required.push(...branch.required);
+      for (const [key, value] of Object.entries(branch)) {
+        if (key === 'properties' || key === 'required' || key === 'allOf') continue;
+        merged[key] = value;
+      }
+    }
+    if (Object.keys(properties).length) merged.properties = properties;
+    if (required.length) merged.required = [...new Set(required)];
+    return withOuterDescription(toGeminiSchema(merged), schema);
   }
 
   const type = baseType(schema);

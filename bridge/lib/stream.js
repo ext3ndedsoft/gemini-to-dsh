@@ -134,6 +134,9 @@ export async function handleStream(req, res, body) {
     try {
       upstreamRes = await upstream(prepared, controller.signal);
     } catch (err) {
+      // The client pressed Stop before upstream answered: nothing is owed to a
+      // connection that is already gone, and a 502 would only be logged against it.
+      if (controller.signal.aborted) return;
       if (counters.content || counters.toolCalls) break;
       return openAiError(res, 502, 'upstream request failed: ' + err.message);
     }

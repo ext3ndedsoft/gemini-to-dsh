@@ -72,7 +72,7 @@ if (ENABLED) {
     const cached = cache.get(hostname);
     if (cached && Date.now() - cached.at < TTL) return reply(done, opts, cached.address);
 
-    return original(hostname, options, (err, address, family) => {
+    return original(hostname, opts, (err, address, family) => {
       // The fallback only knows IPv4 answers, so an explicit AAAA request is left alone.
       if (!err || err.code !== 'ENOTFOUND' || opts.family === 6) return done(err, address, family);
       // A cold start resolves the same host from several sockets at once. They share

@@ -7,7 +7,7 @@ import { DEFAULT_MODEL, log } from './config.js';
 import { chunkId, errorStatus, openAiError, sendJson, upstreamErrorText, usagePayload } from './http.js';
 import { newCallId, rememberCall, flushSignatures } from './signatures.js';
 import { MAX_ATTEMPTS, retryBody } from './stream.js';
-import { splitThinking } from './thinking.js';
+import { ThinkingStream } from './thinking.js';
 import { recordLatency } from '../accounts.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
 
@@ -68,6 +68,9 @@ export async function handleOnce(req, res, body) {
     toolCalls.length = 0;
     groupSignature = undefined;
     unsigned = [];
+    // One streamer for the whole response: <thinking> tags arrive split across
+    // chunks, and a per-chunk parse cannot see a tag that opened in another one.
+    const splitter = new ThinkingStream();
 
     try {
       for await (const payload of readSse(upstreamRes.body)) {
@@ -108,9 +111,20 @@ export async function handleOnce(req, res, body) {
             if (!suppressReasoning && part.text.trim()) reasoning += part.text;
             continue;
           }
-          const split = splitThinking(part.text);
-          text += split.content;
-          if (split.reasoning && !suppressReasoning) reasoning += split.reasoning;
+          for (const piece of splitter.push(part.text)) {
+            if (piece.kind === 'reasoning') {
+              if (!suppressReasoning) reasoning += piece.text;
+            } else {
+              text += piece.text;
+            }
+          }
+        }
+      }
+      for (const piece of splitter.flush()) {
+        if (piece.kind === 'reasoning') {
+          if (!suppressReasoning) reasoning += piece.text;
+        } else {
+          text += piece.text;
         }
       }
     } catch (err) {

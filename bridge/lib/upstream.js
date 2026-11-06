@@ -17,7 +17,7 @@ import { noteRequest,
 import { DEFAULT_PROJECT, log, resolveModel } from './config.js';
 import { resetHint } from './http.js';
 import { toContents } from './messages.js';
-import { functionCallingConfig, thinkingConfig, toolDeclarations } from './schema.js';
+import { functionCallingConfig, thinkingConfig, toGeminiSchema, toolDeclarations } from './schema.js';
 
 export async function getProject(account) {
   const acc = account || primaryAccount();
@@ -67,6 +67,16 @@ export function buildRequest(body) {
   else if (typeof body.max_completion_tokens === 'number') generationConfig.maxOutputTokens = body.max_completion_tokens;
   if (Array.isArray(body.stop) && body.stop.length) generationConfig.stopSequences = body.stop.slice(0, 5);
   generationConfig.thinkingConfig = thinkingConfig(body.reasoning_effort, generationConfig.maxOutputTokens, body.__thinking);
+  if (body.response_format) {
+    if (body.response_format.type === 'json_object' || body.response_format.type === 'json_schema') {
+      generationConfig.responseMimeType = 'application/json';
+      if (body.response_format.json_schema?.schema) {
+        // Gemini wants its own Schema shape: types in upper case, no JSON-Schema
+        // keywords. The raw OpenAI schema is rejected outright with a 400.
+        generationConfig.responseSchema = toGeminiSchema(body.response_format.json_schema.schema);
+      }
+    }
+  }
   if (Object.keys(generationConfig).length) request.generationConfig = generationConfig;
 
   return { model: resolveModel(body.model), project: body.__project || null, request };

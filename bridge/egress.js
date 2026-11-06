@@ -1233,8 +1233,13 @@ export function startEgress({ log = () => {}, port = 0 } = {}) {
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head.rest?.length) socket.write(head.rest);
 			client.pipe(socket).pipe(client);
+			// Dropping the pre-connect error handler above leaves a socket whose next
+			// error (a reset from the far side, or a write into a half-closed pipe)
+			// has no listener at all — and an unhandled 'error' is fatal to the process.
+			client.on('error', () => socket.destroy());
 			socket.on('error', () => client.destroy());
 			client.on('close', () => socket.destroy());
+			socket.on('close', () => client.destroy());
 		};
 
 		// One CONNECT must answer inside the client's own connect timeout, otherwise the

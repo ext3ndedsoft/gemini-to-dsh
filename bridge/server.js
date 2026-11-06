@@ -327,9 +327,11 @@ const server = http.createServer(async (req, res) => {
   } else if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(origin)) {
     res.setHeader('access-control-allow-origin', origin);
   } else {
-    // Deliberately no allow-origin header: the browser then refuses to read the
-    // response, while the request itself still works for non-browser callers.
+    // CORS only stops the page from *reading* the reply, not from sending it: a
+    // plain text/plain POST needs no preflight, so a foreign page would still be
+    // able to delete an account or spend quota. A foreign origin is refused here.
     log(`cors: refused origin ${origin}`);
+    return openAiError(res, 403, 'cross-origin request refused', 'forbidden');
   }
   res.setHeader('access-control-allow-headers', 'authorization, content-type');
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
