@@ -108,7 +108,11 @@ async function handleModels(res) {
 }
 
 function authorized(req, url) {
-  if (url && url.pathname.startsWith('/api/v1/')) {
+  // Every route under /v1 and /api/v1 answers with the account's quota, so a token
+  // is required for all of them. The /api/v1 prefix used to be exempted for
+  // loopback callers, which meant any local process — not just the client the token
+  // was handed to — could spend the quota without presenting it.
+  if (url && url.pathname.startsWith('/api/v1/') && !SHARED_SECRET) {
     return isLocal(req);
   }
   const header = req.headers.authorization || '';
@@ -236,8 +240,8 @@ async function handleAccountRoutes(req, res, url) {
     }
     return openAiError(res, 404, 'not found');
   } catch (err) {
-    log('account route failed: ' + err.message);
-    return openAiError(res, 500, err.message);
+    log('account route failed: ' + (process.env.AG_DEBUG === '1' ? err.stack || err.message : err.message));
+    return openAiError(res, err.status || 500, err.status ? err.message : 'internal bridge error');
   }
 }
 
@@ -403,8 +407,15 @@ const server = http.createServer(async (req, res) => {
       if (body.stream) await handleStream(req, res, body);
       else await handleOnce(req, res, body);
     } catch (err) {
-      log('request failed: ' + (err.stack || err.message));
-      openAiError(res, 500, err.message);
+      // The stack carries absolute paths and internals, and err.message can quote
+      // them back to the client. Log the detail, answer with the shape of the fault.
+      const status = Number(err.status) || 500;
+      if (status >= 500) {
+        log('request failed: ' + (process.env.AG_DEBUG === '1' ? err.stack || err.message : err.message));
+        return openAiError(res, 500, 'internal bridge error', 'internal_error');
+      }
+      log(`request rejected (${status}): ${err.message}`);
+      return openAiError(res, status, err.message);
     }
     return;
   }

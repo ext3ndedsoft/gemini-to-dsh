@@ -10,14 +10,18 @@
  */
 
 const DISABLED = process.env.AG_PACE === '0';
-const DEFAULT_TICK = Number(process.env.AG_PACE_MS || 30);
+const rawTick = Number(process.env.AG_PACE_MS || 30);
+// A non-numeric AG_PACE_MS ("30 мс", "30ms") gives NaN, and Math.max(10, NaN) is
+// still NaN: setTimeout(fn, NaN) fires after ~1 ms, so pacing quietly turned into a
+// stream of one-millisecond chunks with a busy timer.
+const DEFAULT_TICK = Number.isFinite(rawTick) && rawTick > 0 ? rawTick : 30;
 /** How many ticks a full queue should take to drain — smaller means smoother. */
 const DRAIN_TICKS = 8;
 
 export class Pacer {
   constructor(emit, { tickMs = DEFAULT_TICK } = {}) {
     this.emit = emit;
-    this.tickMs = Math.max(10, tickMs);
+    this.tickMs = Number.isFinite(tickMs) ? Math.max(10, tickMs) : DEFAULT_TICK;
     this.queue = '';
     this.timer = null;
     this.closed = false;

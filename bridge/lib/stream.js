@@ -163,6 +163,8 @@ export async function handleStream(req, res, body) {
 
     let failed = false;
     let timed = false;
+    let sawFinish = false;
+    finish = null;
     try {
       for await (const payload of readSse(upstreamRes.body)) {
         if (!timed && upstreamRes.__agAccount) {
@@ -174,7 +176,10 @@ export async function handleStream(req, res, body) {
         if (response.usageMetadata) usage = response.usageMetadata;
         const candidate = response.candidates && response.candidates[0];
         if (!candidate) continue;
-        if (candidate.finishReason) finish = candidate.finishReason;
+        if (candidate.finishReason) {
+          finish = candidate.finishReason;
+          sawFinish = true;
+        }
 
         for (const part of (candidate.content && candidate.content.parts) || []) {
           // A signature can arrive on its own part, or on a later part than the
@@ -221,6 +226,15 @@ export async function handleStream(req, res, body) {
       }
     }
 
+    // A stream that ends without a finish reason was cut, not completed: the
+    // final chunk is where upstream says how the turn ended. Treating a lost tail
+    // as a normal stop is how half an answer becomes the stored answer.
+    if (!failed && !sawFinish) {
+      log('upstream stream ended without a finish reason; treating it as interrupted');
+      failed = true;
+      interrupted = true;
+    }
+
     if (failed) break;
     if (counters.content || counters.toolCalls) break;
     if (attempt === MAX_ATTEMPTS - 1) break;
@@ -232,7 +246,13 @@ export async function handleStream(req, res, body) {
   pacer.flush();
   flushSignatures();
 
-  if (!wrote) {
+  // Reasoning is not an answer. A client that receives thoughts and then a
+  // finish_reason "stop" renders a step that said nothing, treats the turn as
+  // complete and stops the agent loop there — the task looks finished while
+  // nothing was produced. When nothing visible came out, an error is the honest
+  // result, even if reasoning already reached the wire.
+  const answered = counters.content > 0 || counters.toolCalls > 0;
+  if (!wrote || !answered) {
     if (interrupted) {
       return openAiError(
         res,
@@ -241,6 +261,9 @@ export async function handleStream(req, res, body) {
         'stream_interrupted'
       );
     }
+    if (counters.reasoning > 0) {
+      log(`upstream produced ${counters.reasoning} chars of reasoning and no answer; reporting a failure`);
+    }
     return openAiError(res, 502, 'upstream returned an empty answer', 'empty_upstream_response');
   }
 
@@ -248,26 +271,45 @@ export async function handleStream(req, res, body) {
     // Half an answer is not an answer: say so, instead of ending the turn with
     // finish_reason "stop" and letting the client store a cut sentence as final.
     log(`stream interrupted after ${counters.content} answer chars; reporting it to the client`);
-    sseHead(res);
-    res.write(
-      'data: ' +
-        JSON.stringify({
-          error: {
-            message: 'upstream stream was interrupted; the answer above is incomplete',
-            type: 'stream_interrupted',
-            code: 'stream_interrupted',
-          },
-        }) +
-        '\n\n'
+    return openAiError(
+      res,
+      502,
+      'upstream stream was interrupted; the answer above is incomplete',
+      'stream_interrupted'
     );
-    res.write('data: [DONE]\n\n');
-    res.end();
-    return;
+  }
+
+  // Only STOP is a normal end. Dressing a safety block or a broken tool call up as
+  // "stop" hands the client a turn that looks finished while nothing came out.
+  if (finish === 'MALFORMED_FUNCTION_CALL' || finish === 'UNEXPECTED_TOOL_CALL') {
+    log(`upstream could not build a valid tool call (${finish}); reporting it to the client`);
+    return openAiError(
+      res,
+      502,
+      `upstream could not build a valid tool call (${finish})`,
+      'upstream_function_call_failed'
+    );
   }
 
   // A truncated turn is a truncated turn even when what survived looks like a tool
   // call: reporting tool_calls here hides a cut-off argument list from the client.
-  const finishReason = finish === 'MAX_TOKENS' ? 'length' : counters.toolCalls > 0 ? 'tool_calls' : 'stop';
+  const FILTERED = {
+    SAFETY: 1,
+    RECITATION: 1,
+    BLOCKLIST: 1,
+    PROHIBITED_CONTENT: 1,
+    SPII: 1,
+    IMAGE_SAFETY: 1,
+    OTHER: 1,
+  };
+  const finishReason =
+    finish === 'MAX_TOKENS'
+      ? 'length'
+      : FILTERED[finish]
+        ? 'content_filter'
+        : counters.toolCalls > 0
+          ? 'tool_calls'
+          : 'stop';
   const finalChunk = {
     id,
     object: 'chat.completion.chunk',

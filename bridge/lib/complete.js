@@ -11,6 +11,17 @@ import { ThinkingStream } from './thinking.js';
 import { recordLatency } from '../accounts.js';
 import { parseSseJson, readSse, upstream } from './upstream.js';
 
+// Same table as the streaming path: a safety stop is not a finished answer.
+const FILTERED_FINISH = {
+  SAFETY: 1,
+  RECITATION: 1,
+  BLOCKLIST: 1,
+  PROHIBITED_CONTENT: 1,
+  SPII: 1,
+  IMAGE_SAFETY: 1,
+  OTHER: 1,
+};
+
 export async function handleOnce(req, res, body) {
   const model = body.model || DEFAULT_MODEL;
   // A cancelled client must not keep paying for the upstream call. 'close' on the
@@ -177,7 +188,13 @@ export async function handleOnce(req, res, body) {
           ...(reasoning ? { reasoning_content: reasoning } : {}),
           ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
         },
-        finish_reason: toolCalls.length ? 'tool_calls' : finish === 'MAX_TOKENS' ? 'length' : 'stop',
+        finish_reason: toolCalls.length
+          ? 'tool_calls'
+          : finish === 'MAX_TOKENS'
+            ? 'length'
+            : FILTERED_FINISH[finish]
+              ? 'content_filter'
+              : 'stop',
       },
     ],
     usage: usagePayload(usage) || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },

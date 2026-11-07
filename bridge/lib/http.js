@@ -6,16 +6,24 @@ export function jsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       size += chunk.length;
       if (size > 64 * 1024 * 1024) {
+        // Destroying the request here killed the socket before the 413 could be
+        // written, so an oversize body reached the client as a bare connection
+        // reset. Reject first and keep draining (discarding) the rest instead.
+        tooLarge = true;
+        size = 0;
+        chunks.length = 0;
         reject(Object.assign(new Error('request body too large'), { status: 413 }));
-        req.destroy();
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (tooLarge) return;
       try {
         resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
       } catch {
@@ -41,6 +49,22 @@ export function sendJson(res, status, payload) {
 
 export function openAiError(res, status, message, code = 'upstream_error') {
   if (res.headersSent) {
+    // The status line is already gone, so the only honest remainder is an event
+    // on the wire. Ending silently leaves the client holding a 200 with no
+    // finish_reason — a truncated turn that it stores as a finished one.
+    const stream = String(res.getHeader('content-type') || '').includes('text/event-stream');
+    if (stream && !res.writableEnded) {
+      try {
+        res.write(
+          'data: ' +
+            JSON.stringify({ error: { message, type: 'upstream_error', code } }) +
+            '\n\n'
+        );
+        res.write('data: [DONE]\n\n');
+      } catch {
+        // The client walked away mid-write; nothing left to tell it.
+      }
+    }
     res.end();
     return;
   }

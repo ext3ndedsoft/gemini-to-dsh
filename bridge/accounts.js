@@ -98,6 +98,11 @@ const latencies = new Map();
 const requestCounts = new Map();
 /** @type {Map<string, Promise<any>>} */
 const refreshing = new Map();
+/** Accounts this process deleted: merging with disk must not resurrect them. */
+const removedIds = new Set();
+/** Accounts whose cooldowns this process cleared: disk's stale copy must not return. */
+const clearedIds = new Set();
+let writeSeq = 0;
 /** @type {Map<string, {verifier:string, at:number}>} */
 const pendingLogins = new Map();
 
@@ -109,13 +114,50 @@ function log(...args) {
 
 function saveStore() {
   fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
-  const tmp = STORE_FILE + '.tmp';
   // Wall clocks ride along: "spent until the 12th" must not turn back into
   // "healthy" just because the bridge restarted, or every restart re-learns the
   // same dead account with another 429.
   const payload = { ...store, cooldowns: Object.fromEntries(cooldowns) };
+  // Another process may have written the store since this one loaded it: a second
+  // bridge on another port, a manual run next to the supervised one, a login from a
+  // second window. Saving this process's snapshot wholesale used to delete whatever
+  // they added — a freshly logged-in account, a new pin — without a single error.
+  // Accounts and cooldowns are merged with a tombstone for local deletions.
+  let onDisk = null;
+  try {
+    onDisk = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    // First write, unreadable file or a torn one: this process's view is all there is.
+  }
+  if (onDisk && Array.isArray(onDisk.accounts)) {
+    payload.accounts = [...(store.accounts || [])];
+    const known = new Set(payload.accounts.map((acc) => acc.id));
+    for (const acc of onDisk.accounts) {
+      if (!acc || !acc.id || known.has(acc.id) || removedIds.has(acc.id)) continue;
+      payload.accounts.push(acc);
+    }
+    const diskCooldowns = onDisk.cooldowns && typeof onDisk.cooldowns === 'object' ? onDisk.cooldowns : {};
+    for (const [key, until] of Object.entries(diskCooldowns)) {
+      if (key in payload.cooldowns) continue;
+      if (clearedIds.has(key.split('|')[0])) continue;
+      payload.cooldowns[key] = until;
+    }
+    if (payload.pinned == null && onDisk.pinned) payload.pinned = onDisk.pinned;
+    payload.rotation = { ...(onDisk.rotation || {}), ...(store.rotation || {}) };
+    if (payload.enabled === undefined) payload.enabled = onDisk.enabled;
+  }
+  // One temporary name per write: two processes sharing a single `.tmp` used to
+  // publish each other's half-written file, and the losing rename threw ENOENT.
+  const tmp = `${STORE_FILE}.${process.pid}.${(writeSeq += 1)}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
-  fs.renameSync(tmp, STORE_FILE);
+  try {
+    fs.renameSync(tmp, STORE_FILE);
+  } catch (err) {
+    log(`store save failed: ${err.message}`);
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
+  }
 }
 
 function emailFromIdToken(idToken) {
@@ -151,9 +193,18 @@ function writeNativeCreds(acc) {
     ...(acc.scope ? { scope: acc.scope } : {}),
   };
   fs.mkdirSync(path.dirname(CREDS_FILE), { recursive: true });
-  const tmp = CREDS_FILE + '.bridge.tmp';
+  // Same reasoning as saveStore: a shared `.tmp` lets a second writer publish a
+  // half-written file, and this one is the credential file Antigravity itself uses.
+  const tmp = `${CREDS_FILE}.${process.pid}.${(writeSeq += 1)}.bridge.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-  fs.renameSync(tmp, CREDS_FILE);
+  try {
+    fs.renameSync(tmp, CREDS_FILE);
+  } catch (err) {
+    log(`credential file write failed: ${err.message}`);
+    try {
+      fs.unlinkSync(tmp);
+    } catch {}
+  }
 }
 
 function bootstrapNative() {
@@ -172,8 +223,11 @@ function bootstrapNative() {
   // The shared file wins only when it is strictly newer than what we hold: after
   // a bridge-side refresh our copy is authoritative and must not be clobbered.
   const fileNewer = !acc.expiry_date || (creds.expiry_date || 0) > acc.expiry_date;
-  acc.refresh_token = creds.refresh_token || acc.refresh_token;
   if (fileNewer) {
+    // access and refresh tokens must come from the same session: taking the refresh
+    // token unconditionally handed this entry the refresh of whatever account the
+    // IDE logged into last, while keeping the old email, project and cooldowns.
+    acc.refresh_token = creds.refresh_token || acc.refresh_token;
     acc.access_token = creds.access_token || acc.access_token;
     acc.expiry_date = creds.expiry_date || acc.expiry_date;
   }
@@ -528,6 +582,11 @@ export function clearCooldowns(id) {
   for (const key of [...cooldowns.keys()]) {
     if (key.startsWith(id + '|')) cooldowns.delete(key);
   }
+  // Cooldowns live in the store file too. Dropping them only in memory left the old
+  // wall on disk, so a restart put the account straight back under it — for days,
+  // when the wall was a weekly one.
+  clearedIds.add(id);
+  if (store) saveStore();
 }
 
 export function cooldownSnapshot() {
@@ -675,6 +734,7 @@ export function removeAccount(id) {
   if (current.accounts[index].native) return false;
   current.accounts.splice(index, 1);
   if (current.pinned === id) current.pinned = null;
+  removedIds.add(id);
   modelsCache.delete(id);
   // The account is gone, its cooldowns and readings are not: every later save would
   // write them back to disk for an account nobody can select any more.

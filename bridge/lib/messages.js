@@ -45,6 +45,9 @@ export function toContents(messages) {
   };
 
   for (const [messageIndex, message] of (messages || []).entries()) {
+    // A client that sends [null] (or any non-object) must not turn the whole
+    // request into a 500: the bad entry is skipped like an empty one.
+    if (!message || typeof message !== 'object') continue;
     const role = message.role;
     if (role === 'system' || role === 'developer') {
       const text = textOf(message.content);
@@ -60,7 +63,11 @@ export function toContents(messages) {
           if (part.type === 'text' && part.text) parts.push({ text: part.text });
           else if (part.type === 'image_url') {
             const image = imagePart(part.image_url && part.image_url.url);
+            // Only data: URLs can be inlined. Dropping a URL image silently used to
+            // delete the whole turn when it was the only part, so say it out loud
+            // instead: the model keeps the context, the client keeps working.
             if (image) parts.push(image);
+            else parts.push({ text: '[image omitted: image_url must be a data: URL with base64 content]' });
           }
         }
       } else {

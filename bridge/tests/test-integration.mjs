@@ -264,11 +264,14 @@ try {
   });
   const neverBody = await never.text();
   // A model that only ever emits thoughts produces reasoning and no answer. The
-// stream still has to close cleanly with stop, so the client is not left hanging;
-// an empty answer is visible as an empty answer, not as a silent dead turn.
-  check('a permanently thought-only model closes with stop and no answer', () => {
+  // turn must not close with finish_reason "stop": clients read that as a finished
+  // turn, store an empty answer and stop the agent loop there, so the task looks
+  // done while nothing was produced. The honest end of a thought-only turn is an
+  // error event on the wire.
+  check('a permanently thought-only model ends as an error, not as a finished turn', () => {
     assert.equal(never.status, 200);
-    assert.match(neverBody, /"finish_reason":"stop"/);
+    assert.match(neverBody, /"code":"empty_upstream_response"/);
+    assert.ok(!neverBody.includes('"finish_reason":"stop"'), 'a thought-only turn must not look finished');
     const answerText = neverBody
       .split('\n')
       .filter((line) => line.startsWith('data:'))
