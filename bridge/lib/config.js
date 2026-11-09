@@ -56,8 +56,14 @@ export function resolveModel(requested) {
   return alias ? alias[1] : requested;
 }
 
-/** How long the upstream may stay silent before an attempt counts as failed. */
-export const UPSTREAM_TIMEOUT_MS = Number(process.env.AG_UPSTREAM_TIMEOUT_MS || 60000);
+/** How long the upstream may stay silent before an attempt counts as failed.
+ *
+ * This is the budget from request to first byte, and it is the one that punishes a
+ * long task hardest: a prompt with a full session of tool output behind it spends
+ * longer than a minute inside the model before the first token comes out. Timing
+ * that out cools a perfectly good account for five minutes and fails the turn.
+ */
+export const UPSTREAM_TIMEOUT_MS = Number(process.env.AG_UPSTREAM_TIMEOUT_MS || 150000);
 
 export function log(...args) {
   console.log(new Date().toISOString(), ...args);

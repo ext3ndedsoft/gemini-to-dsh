@@ -175,7 +175,8 @@ Everything is environment variables; the full list with defaults is in [`.env.ex
 | `AG_EXHAUSTED_AT` | `0.05` | Threshold where the pin stops being first |
 | `AG_PACE_MS` | `30` | Text pacing; `AG_PACE=0` disables |
 | `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Model that draws |
-| `AG_UPSTREAM_TIMEOUT_MS` | `20000` | How long upstream may stay silent |
+| `AG_UPSTREAM_TIMEOUT_MS` | `150000` | How long upstream may stay silent before the first byte |
+| `AG_RESUME_ATTEMPTS` | `2` | How many times a cut answer is continued |
 | `AG_HUB_VERSION` | `2.26.0` | `hub` identity version, below which Google withholds some quota groups |
 | `AG_CLIENT_ID` / `AG_CLIENT_SECRET` | — | OAuth client for token refresh |
 

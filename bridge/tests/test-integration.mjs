@@ -52,6 +52,12 @@ function sse(res, response) {
 
 const attempts = new Map();
 
+// A cut turn: the first leg stops mid-sentence, the continuation starts one
+// sentence early. The repeat has to be trimmed, not delivered twice.
+const CUT_FIRST = 'Первый абзац ответа заканчивается здесь. ';
+const CUT_REPEAT = 'заканчивается здесь. ';
+const CUT_REST = 'Второй абзац пришёл после обрыва.';
+
 /** Stub Cloud Code: behaviour is picked by a marker inside the user message. */
 function startStub(port) {
   const server = http.createServer((req, res) => {
@@ -74,6 +80,21 @@ function startStub(port) {
         .flatMap((entry) => entry.parts || [])
         .map((part) => part.text || '')
         .join(' ');
+      if (text.includes('cutme')) {
+        const continued = text.includes('The transport cut the previous reply');
+        const parts = continued ? [{ text: CUT_REPEAT + CUT_REST }] : [{ text: CUT_FIRST }];
+        res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+        // The cut leg carries no finishReason and no closing frame: that is what a
+        // relay dropping a long stream looks like on the wire.
+        const response = {
+          candidates: [
+            { content: { role: 'model', parts }, ...(continued ? { finishReason: 'STOP' } : {}) },
+          ],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+        };
+        res.write('data: ' + JSON.stringify({ response }) + '\n\n');
+        return res.end();
+      }
       const key = text.includes('never')
         ? 'never'
         : text.includes('longthink')
@@ -253,6 +274,42 @@ try {
     assert.match(longRaw, /"content":"ANSWER"/);
     const reasoningFirst = longRaw.indexOf('reasoning_content') < longRaw.indexOf('"content":"ANSWER"');
     assert.ok(reasoningFirst, 'reasoning must precede the answer');
+  });
+
+  console.log('\na cut answer is continued');
+
+  const cut = await fetch(BASE + '/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model: 'gemini-3.8-flash', stream: true, messages: [{ role: 'user', content: 'cutme' }] }),
+  });
+  const cutRaw = await cut.text();
+  const cutAnswer = cutRaw
+    .split('\n')
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => {
+      try {
+        return JSON.parse(line.slice(5)).choices?.[0]?.delta?.content || '';
+      } catch {
+        return '';
+      }
+    })
+    .join('');
+
+  check('a transport cut mid-answer is completed instead of failing the turn', () => {
+    assert.equal(cut.status, 200);
+    assert.ok(cutAnswer.startsWith(CUT_FIRST), `got: ${JSON.stringify(cutAnswer)}`);
+    assert.ok(cutAnswer.includes(CUT_REST), 'the continuation never reached the client');
+    assert.ok(!cutRaw.includes('"code":"stream_interrupted"'), 'the turn was reported as failed');
+    assert.match(cutRaw, /"finish_reason":"stop"/);
+  });
+
+  check('the sentence the model repeated is delivered once', () => {
+    assert.equal(
+      cutAnswer.split(CUT_REPEAT).length - 1,
+      1,
+      `got: ${JSON.stringify(cutAnswer)}`
+    );
   });
 
   console.log('\nno-answer at all');

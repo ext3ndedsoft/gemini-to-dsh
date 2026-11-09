@@ -175,7 +175,8 @@ node egress-ctl.mjs check mydns
 | `AG_EXHAUSTED_AT` | `0.05` | Порог, на котором пин перестаёт быть первым |
 | `AG_PACE_MS` | `30` | Такт выдачи текста; `AG_PACE=0` выключает |
 | `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Какая модель рисует картинки |
-| `AG_UPSTREAM_TIMEOUT_MS` | `20000` | Сколько апстрим может молчать |
+| `AG_UPSTREAM_TIMEOUT_MS` | `150000` | Сколько апстрим может молчать до первого байта |
+| `AG_RESUME_ATTEMPTS` | `2` | Сколько раз оборванный на полуслове ответ продолжается |
 | `AG_HUB_VERSION` | `2.26.0` | Версия identity `hub`, ниже которой Гугл не отдаёт часть групп квоты |
 | `AG_CLIENT_ID` / `AG_CLIENT_SECRET` | — | OAuth-клиент для обновления токенов |
 

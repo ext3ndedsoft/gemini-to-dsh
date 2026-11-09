@@ -22,6 +22,29 @@ import { parseSseJson, readSse, upstream } from './upstream.js';
 export const MAX_ATTEMPTS = 3;
 const EMPTY_NUDGE = 'Your previous reply was empty. Call a tool now, or answer the user in text.';
 
+/**
+ * A transport cut in the middle of an answer is continued instead of being thrown
+ * away. Long turns are exactly the ones a relay or an edge drops, and a failed turn
+ * on minute nine costs more than the whole retry ladder.
+ */
+const RESUME_ATTEMPTS = Number(process.env.AG_RESUME_ATTEMPTS || 2);
+
+/** Tail of the answer kept as the anchor a continuation has to pick up from. */
+const RESUME_ANCHOR = 160;
+
+const CONTINUE_NOTE =
+  'The transport cut the previous reply off mid-sentence. Continue it from the exact point where it ' +
+  'stopped, in the same language, tone and formatting. Do not repeat anything already written, do not ' +
+  'restart the reply, and do not mention the interruption.';
+
+/** The request that continues an answer the transport cut in half. */
+export function continuationBody(body, tail) {
+  const messages = [...(body.messages || [])];
+  messages.push({ role: 'assistant', content: tail });
+  messages.push({ role: 'user', content: CONTINUE_NOTE });
+  return { ...body, messages, __suppressReasoning: true };
+}
+
 /** A degraded copy of the request used only when the previous attempt said nothing. */
 export function retryBody(body, attempt) {
   if (attempt === 0) return body;
@@ -52,6 +75,12 @@ export async function handleStream(req, res, body) {
   let unsigned = [];
   /** The upstream body died mid-answer: the turn is incomplete, not finished. */
   let interrupted = false;
+  /** Answer text seen so far: the tail of it is what a continuation may repeat. */
+  let answer = '';
+  /** A continuation is being de-duplicated: nothing goes out until the overlap is known. */
+  let trimWindow = false;
+  let pendingText = '';
+  let resumes = 0;
 
   const emit = (delta, finishReason = null) => {
     sseHead(res);
@@ -85,7 +114,42 @@ export async function handleStream(req, res, body) {
     if (!text) return;
     startRole();
     counters.content += text.length;
+    answer = (answer + text).slice(-RESUME_ANCHOR * 2);
     pacer.push(text);
+  };
+
+  /**
+   * The longest suffix of what the reader already has that the continuation starts
+   * with. Models pick up a sentence or two early, and that repeat must not reach the
+   * client twice.
+   */
+  const overlapLength = (prev, next) => {
+    const max = Math.min(prev.length, next.length, RESUME_ANCHOR * 2);
+    for (let k = max; k >= 12; k -= 1) {
+      if (prev.endsWith(next.slice(0, k))) return k;
+    }
+    return 0;
+  };
+
+  const flushPending = () => {
+    if (!pendingText) return;
+    const skip = overlapLength(answer, pendingText);
+    const rest = pendingText.slice(skip);
+    pendingText = '';
+    trimWindow = false;
+    if (rest) emitContent(rest);
+  };
+
+  /** Text goes out as it arrives, except right after a continuation: that one is
+   * held until the overlap with the previous leg can be measured. */
+  const feedAnswer = (text) => {
+    if (!text) return;
+    if (!trimWindow) {
+      emitContent(text);
+      return;
+    }
+    pendingText += text;
+    if (pendingText.length >= RESUME_ANCHOR * 2) flushPending();
   };
 
   /** Reasoning goes out the moment it arrives: holding it made a whole thinking phase invisible. */
@@ -205,7 +269,7 @@ export async function handleStream(req, res, body) {
             if (piece.kind === 'reasoning') {
               if (!suppressReasoning) emitReasoning(piece.text);
             } else {
-              emitContent(piece.text);
+              feedAnswer(piece.text);
             }
           }
         }
@@ -222,7 +286,7 @@ export async function handleStream(req, res, body) {
         // Reasoning released after the answer started would reorder the turn.
         if (!suppressReasoning && !counters.content) emitReasoning(piece.text);
       } else {
-        emitContent(piece.text);
+        feedAnswer(piece.text);
       }
     }
 
@@ -235,11 +299,44 @@ export async function handleStream(req, res, body) {
       interrupted = true;
     }
 
-    if (failed) break;
+    // Whatever the continuation said is known now that its stream is over.
+    if (trimWindow && pendingText) flushPending();
+
+    if (failed) {
+      const answeredNow = counters.content > 0 || counters.toolCalls > 0;
+      const room = attempt < MAX_ATTEMPTS - 1;
+      // A cut before the answer even started costs nothing to retry.
+      if (interrupted && !answeredNow && room) {
+        interrupted = false;
+        failed = false;
+        log(`upstream cut before any answer (attempt ${attempt + 1}); retrying`);
+        continue;
+      }
+      // A cut in the middle of an answer is continued, not thrown away. Tool calls
+      // are the exception: half an argument list cannot be stitched together.
+      if (interrupted && answeredNow && !counters.toolCalls && resumes < RESUME_ATTEMPTS && room) {
+        const tail = answer.slice(-RESUME_ANCHOR);
+        if (tail.trim().length >= 40) {
+          resumes += 1;
+          log(`stream cut after ${counters.content} chars; continuing the answer (${resumes}/${RESUME_ATTEMPTS})`);
+          body = continuationBody(body, tail);
+          trimWindow = true;
+          pendingText = '';
+          interrupted = false;
+          failed = false;
+          continue;
+        }
+      }
+      break;
+    }
     if (counters.content || counters.toolCalls) break;
     if (attempt === MAX_ATTEMPTS - 1) break;
     log(`empty answer for ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
   }
+
+  // A continuation that never filled its window still produced text: keep it rather
+  // than throwing away the part the model did write.
+  flushPending();
 
   // Nothing may still be queued when the closing chunk goes out, or the tail of
   // the answer would arrive after finish_reason and be dropped by the client.
