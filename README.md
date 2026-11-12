@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg?v=3" alt="gemini→dsh — Gemini в DeepSeek Harness" width="100%">
+  <img src="assets/banner.svg?v=4" alt="gemini→dsh — Gemini в DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
@@ -23,9 +23,9 @@
 - **Веб-поиск** и **lean-context** — по желанию, отдельными плагинами.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=3" alt="Панель: режим DNS" width="384">
+  <img src="assets/panel-dns.png?v=4" alt="Панель: режим DNS" width="384">
   &nbsp;
-  <img src="assets/panel-proxy.png?v=3" alt="Панель: режим Proxy" width="384">
+  <img src="assets/panel-proxy.png?v=4" alt="Панель: режим Proxy" width="384">
 </p>
 
 ## Установка

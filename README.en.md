@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.en.svg?v=3" alt="gemini→dsh — Gemini in DeepSeek Harness" width="100%">
+  <img src="assets/banner.en.svg?v=4" alt="gemini→dsh — Gemini in DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
@@ -23,9 +23,9 @@ No dependencies, Node 20+.
 - **Web search** and **lean-context** — optional, as separate plugins.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=3" alt="Panel: DNS mode" width="384">
+  <img src="assets/panel-dns.png?v=4" alt="Panel: DNS mode" width="384">
   &nbsp;
-  <img src="assets/panel-proxy.png?v=3" alt="Panel: Proxy mode" width="384">
+  <img src="assets/panel-proxy.png?v=4" alt="Panel: Proxy mode" width="384">
 </p>
 
 ## Install
