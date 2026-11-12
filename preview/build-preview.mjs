@@ -152,7 +152,7 @@ ${styles}
 <div class="agq">
   <div class="panel"><div class="panel-in">
     <div class="head">
-      <span class="mark">A</span><h1>Antigravity</h1><span class="chip">Google AI Pro</span>
+      <span class="mark">A</span><div><h1>Antigravity</h1><small>1 акк. · Google AI Pro · маршрут и квоты</small></div>
       <button class="icon">⟳</button>
     </div>
     <div class="scroll">

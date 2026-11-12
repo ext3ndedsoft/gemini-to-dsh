@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
 		const CSS = `
 .agq{--bg:#0b0b10;--card:rgba(20,20,28,.92);--line:rgba(255,255,255,.08);
 	--line-strong:rgba(255,255,255,.14);--text:#ececf1;--muted:#8b8b99;
-	--a:#8b5cf6;--b:#22d3ee;--good:#34d399;--warn:#fbbf24;--bad:#f87171;
+	--a:#8aa4ff;--b:#5eead4;--good:#34d399;--warn:#fbbf24;--bad:#f87171;
 	font:12px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text)}
 .agq *{box-sizing:border-box}
 @keyframes agq-panel-in{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
 @keyframes agq-rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 @keyframes agq-fade{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
 @keyframes agq-dash{from{stroke-dashoffset:var(--full)}to{stroke-dashoffset:var(--off)}}
-@keyframes agq-pulse{0%{box-shadow:0 0 0 0 rgba(139,92,246,.35)}100%{box-shadow:0 0 0 10px rgba(139,92,246,0)}}
+@keyframes agq-pulse{0%{box-shadow:0 0 0 0 rgba(138,164,255,.35)}100%{box-shadow:0 0 0 10px rgba(138,164,255,0)}}
 @media (prefers-reduced-motion:reduce){
 	.agq *{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
 }
@@ -49,39 +49,37 @@ window.__ModuleLoader__.load({
 .agq .pill .st{width:4px;height:4px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 6px currentColor}
 .agq .panel{display:flex;overflow:hidden;animation:agq-panel-in .24s cubic-bezier(.2,.9,.25,1) both;transform-origin:bottom right}
 .agq .panel.closing{animation:agq-panel-out .16s ease-in forwards}
-.agq .panel{width:348px;max-width:calc(100vw - 28px);max-height:min(74vh,640px);
-	margin-bottom:10px;border-radius:18px;padding:2px;
-	background:linear-gradient(160deg,rgba(139,92,246,.35),rgba(34,211,238,.18) 42%,transparent 70%);
-	box-shadow:0 26px 70px rgba(0,0,0,.65)}
-.agq .panel-in{display:flex;flex-direction:column;min-height:0;flex:1;max-height:calc(min(74vh,640px) - 4px);border-radius:16px;padding:14px 14px 12px;background:
-	radial-gradient(120% 90% at 100% 0%,rgba(139,92,246,.10),transparent 55%),
-	linear-gradient(180deg,rgba(19,19,27,.99),rgba(12,12,17,.99))}
-.agq .scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin:0 -2px;padding:0 2px 2px;
+.agq .panel{width:392px;max-width:calc(100vw - 28px);max-height:min(78vh,680px);margin-bottom:10px;border-radius:20px;
+	border:1px solid var(--line);background:rgba(16,16,23,.96);backdrop-filter:blur(16px);box-shadow:0 28px 80px rgba(0,0,0,.65)}
+.agq .panel-in{display:flex;flex-direction:column;min-height:0;flex:1;width:100%;max-height:min(78vh,680px)}
+.agq .scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin:0;padding:2px 14px 12px;
 	-webkit-mask-image:linear-gradient(180deg,#000 calc(100% - 16px),transparent);
 	mask-image:linear-gradient(180deg,#000 calc(100% - 16px),transparent)}
 .agq .scroll::-webkit-scrollbar{width:6px}
 .agq .scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px}
-.agq .head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
-.agq .mark{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:700;
-	background:linear-gradient(135deg,var(--a),var(--b));color:#08080c;box-shadow:0 4px 14px rgba(139,92,246,.45)}
-.agq .head h1{font-size:12.5px;font-weight:600;letter-spacing:.02em;margin:0}
+.agq .head{display:flex;align-items:center;gap:10px;padding:14px 14px 12px}
+.agq .mark{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;font-size:13px;font-weight:700;flex:none;
+	background:linear-gradient(135deg,var(--a),var(--b));color:#0a0a10}
+.agq .head h1{font-size:14px;font-weight:650;letter-spacing:.01em;margin:0}
+.agq .head small{display:block;font-size:10.5px;color:var(--muted);margin-top:1px}
+.agq .icon + .icon{margin-left:0}
 .agq .chip{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
 	border:1px solid var(--line);border-radius:99px;padding:2px 7px}
-.agq .icon{margin-left:auto;width:24px;height:24px;border-radius:7px;display:grid;place-items:center;padding:0;
+.agq .icon{margin-left:auto;width:28px;height:28px;border-radius:9px;display:grid;place-items:center;padding:0;
 	border:1px solid var(--line);color:var(--muted);transition:.15s}
 .agq .icon:hover{color:var(--text);border-color:var(--line-strong);background:rgba(255,255,255,.04)}
 /* Only the glyph turns. Spinning the button itself rotated its border and padding too, which
    reads as a wobbly square rather than a refresh. */
 .agq .icon svg{display:block;transition:transform .2s ease}
 .agq .icon.is-busy svg{animation:agq-spin .9s linear infinite}
-.agq .icon.is-busy{color:var(--b);border-color:rgba(124,156,255,.35)}
+.agq .icon.is-busy{color:var(--b);border-color:rgba(138,164,255,.35)}
 .agq .icon[disabled]{opacity:.6;cursor:default}
 .agq .icon:active{transform:scale(.94)}
 @keyframes agq-spin{to{transform:rotate(360deg)}}
 .agq .seg{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:3px;border-radius:12px;
 	background:rgba(255,255,255,.04);border:1px solid var(--line)}
 .agq .seg .thumb{position:absolute;top:3px;bottom:3px;width:calc((100% - 6px) / 4);border-radius:9px;
-	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 6px 18px rgba(139,92,246,.45),inset 0 1px 0 rgba(255,255,255,.25);
+	background:linear-gradient(135deg,#8aa4ff,#5eead4);box-shadow:0 6px 18px rgba(138,164,255,.45),inset 0 1px 0 rgba(255,255,255,.25);
 	transition:left .26s cubic-bezier(.3,1.1,.4,1);pointer-events:none}
 .agq .seg button{position:relative;z-index:1}
 .agq .seg button{padding:7px 0;border-radius:9px;font-size:11px;font-weight:500;color:var(--muted);
@@ -101,8 +99,8 @@ window.__ModuleLoader__.load({
 	background:rgba(255,255,255,.10);border:1px solid var(--line-strong);transition:.18s}
 .agq .switch i{position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:99px;background:#6b6b78;
 	transition:.18s cubic-bezier(.3,.8,.4,1)}
-.agq .switch.on{background:linear-gradient(135deg,rgba(139,92,246,.55),rgba(34,211,238,.45));border-color:rgba(167,139,250,.55)}
-.agq .switch.on i{left:21px;background:#f4f4ff;box-shadow:0 0 10px rgba(167,139,250,.9)}
+.agq .switch.on{background:linear-gradient(135deg,rgba(138,164,255,.55),rgba(94,234,212,.45));border-color:rgba(138,164,255,.55)}
+.agq .switch.on i{left:21px;background:#f4f4ff;box-shadow:0 0 10px rgba(138,164,255,.9)}
 .agq .sub{margin-top:9px;padding:9px 10px 10px;border-radius:12px;border:1px solid var(--line);
 	background:rgba(255,255,255,.025);animation:agq-rise .24s cubic-bezier(.2,.9,.25,1) both}
 .agq .sub .subhead{font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
@@ -114,7 +112,7 @@ window.__ModuleLoader__.load({
 .agq .chip-btn:hover{color:var(--text);border-color:var(--line-strong);background:rgba(255,255,255,.04)}
 .agq .chip-btn:active{transform:scale(.97)}
 .agq .chip-btn.on{color:#0a0a10;font-weight:600;border-color:transparent;
-	background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 4px 14px rgba(139,92,246,.35)}
+	background:linear-gradient(135deg,#8aa4ff,#5eead4);box-shadow:0 4px 14px rgba(138,164,255,.35)}
 .agq .hint{font-size:9.5px;color:var(--muted);margin-top:6px;line-height:1.4}
 .agq .parsed{font-size:9.5px;color:var(--muted);margin:5px 2px 0;line-height:1.35;letter-spacing:.01em}
 .agq .parsed.ok{color:#7fe3b0}
@@ -123,7 +121,7 @@ window.__ModuleLoader__.load({
 .agq .sect{display:flex;align-items:center;gap:8px;margin:14px 2px 8px;font-size:9.5px;
 	letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .agq .sect:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
-.agq .card{border:1px solid var(--line);border-radius:13px;padding:10px 11px;margin-bottom:8px;
+.agq .card{border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:8px;
 	background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.008));
 	animation:agq-rise .3s cubic-bezier(.2,.9,.25,1) both;transition:border-color .18s,transform .18s,box-shadow .18s}
 .agq .card:hover{border-color:rgba(255,255,255,.16);transform:translateY(-1px);
@@ -135,7 +133,7 @@ window.__ModuleLoader__.load({
 .agq .guard .txt span{display:block;font-size:9.5px;color:var(--muted);margin-top:2px;line-height:1.25}
 .agq .guard .num{display:flex;align-items:center;gap:2px;font-size:10px;color:var(--muted)}
 .agq .guard .num input{width:26px;padding:3px 0;text-align:center;font-size:11px;font-variant-numeric:tabular-nums;color:var(--fg);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;outline:none}
-.agq .guard .num input:focus{border-color:rgba(124,156,255,.5)}
+.agq .guard .num input:focus{border-color:rgba(138,164,255,.5)}
 .agq .guard .num input:disabled{opacity:.45}
 .agq .card .lat{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:10.5px;color:var(--muted)}
 .agq .card .lat b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
@@ -181,7 +179,10 @@ window.__ModuleLoader__.load({
 .agq .empty{font-size:10.5px;color:var(--muted);padding:2px 0}
 .agq .err{font-size:10.5px;color:var(--bad);padding:2px 0;word-break:break-word}
 .agq .foot{display:flex;gap:6px;margin-top:10px;flex:0 0 auto;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)}
-.agq .btn{flex:1;border:1px solid var(--line-strong);border-radius:9px;padding:7px 8px;font-size:11px;
+.agq .panel-in > .foot{margin:0;padding:11px 14px 13px;border-top:1px solid var(--line);background:rgba(0,0,0,.18)}
+.agq .btn.primary{background:linear-gradient(135deg,var(--a),var(--b));color:#0a0a10;border-color:transparent;font-weight:650}
+.agq .btn.primary:hover{background:linear-gradient(135deg,var(--a),var(--b));filter:brightness(1.08)}
+.agq .btn{flex:1;border:1px solid var(--line-strong);border-radius:10px;padding:8px 8px;font-size:11.5px;
 	color:var(--text);background:rgba(255,255,255,.03);transition:.15s}
 .agq .btn:hover{background:rgba(255,255,255,.07);transform:translateY(-1px)}
 .agq .btn:active{transform:scale(.985)}
@@ -190,7 +191,7 @@ window.__ModuleLoader__.load({
 .agq .btn.wide{flex:2}
 .agq .input{width:100%;margin-top:7px;background:rgba(0,0,0,.35);border:1px solid var(--line-strong);
 	border-radius:9px;color:var(--text);font:inherit;font-size:11px;padding:7px 9px;outline:none}
-.agq .input:focus{border-color:rgba(167,139,250,.6);box-shadow:0 0 0 3px rgba(139,92,246,.14)}
+.agq .input:focus{border-color:rgba(138,164,255,.6);box-shadow:0 0 0 3px rgba(138,164,255,.14)}
 .agq .note{font-size:10px;color:var(--muted);margin-top:7px;word-break:break-word}
 `;
 
@@ -1151,8 +1152,7 @@ window.__ModuleLoader__.load({
 									"div",
 									{ className: "head" },
 									h("span", { className: "mark" }, "A"),
-									h("h1", null, "Antigravity"),
-									primary && primary.tierName ? h("span", { className: "chip" }, primary.tierName) : null,
+									h("div", null, h("h1", null, "Antigravity"), h("small", null, accounts.length + " акк." + (primary && primary.tierName ? " · " + primary.tierName : "") + " · маршрут и квоты")),
 									h(
 										"button",
 										{
@@ -1181,7 +1181,8 @@ window.__ModuleLoader__.load({
 												"stroke-linejoin": "round"
 											})
 										)
-									)
+									),
+									h("button", { className: "icon", onClick: toggle, title: "закрыть", "aria-label": "закрыть" }, "×")
 								),
 								h(
 								"div",
@@ -1259,9 +1260,8 @@ h(Transport, {
 								h(
 									"div",
 									{ className: "foot" },
-									h("button", { className: "btn wide", onClick: addAccount }, "+ аккаунт"),
-									h("button", { className: "btn", onClick: test, disabled: busy }, busy ? "…" : "маршрут"),
-									h("button", { className: "btn", onClick: toggle }, "скрыть")
+									h("button", { className: "btn wide primary", onClick: addAccount }, "+ аккаунт"),
+									h("button", { className: "btn", onClick: test, disabled: busy, title: "проверить маршрут запросом к модели" }, busy ? "…" : "проверить маршрут")
 								)
 							)
 						)
