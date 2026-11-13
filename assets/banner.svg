@@ -1,57 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="230" viewBox="0 0 900 230" role="img" aria-label="Gemini — в DeepSeek Harness">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="gemini-to-dsh — Gemini в DeepSeek Harness">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0a0a11"/>
-      <stop offset="52%" stop-color="#101018"/>
-      <stop offset="100%" stop-color="#0a0a11"/>
-    </linearGradient>
-    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#8b5cf6"/>
-      <stop offset="55%" stop-color="#5b8cff"/>
-      <stop offset="100%" stop-color="#22d3ee"/>
-    </linearGradient>
-    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#c6d2ff"/>
-    </linearGradient>
-    <radialGradient id="glowA" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#8b5cf6" stop-opacity=".38"/>
-      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowB" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#22d3ee" stop-opacity=".26"/>
-      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
-    </radialGradient>
-    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
-      <circle cx="1" cy="1" r="1" fill="#ffffff" fill-opacity=".035"/>
-    </pattern>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#090a12"/><stop offset="1" stop-color="#0d0c15"/></linearGradient>
+    <radialGradient id="gA" cx="0.1" cy="0.1" r="0.55"><stop offset="0" stop-color="#6d82ff" stop-opacity="0.30"/><stop offset="1" stop-color="#6d82ff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="gB" cx="0.55" cy="1.05" r="0.45"><stop offset="0" stop-color="#5eead4" stop-opacity="0.13"/><stop offset="1" stop-color="#5eead4" stop-opacity="0"/></radialGradient>
+    <radialGradient id="gC" cx="0.98" cy="0.05" r="0.4"><stop offset="0" stop-color="#b79cff" stop-opacity="0.22"/><stop offset="1" stop-color="#b79cff" stop-opacity="0"/></radialGradient>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1" fill="#fff" opacity="0.07"/></pattern>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="#b9c6ff"/><stop offset="1" stop-color="#c9b4ff"/></linearGradient>
+    <linearGradient id="seam" gradientUnits="userSpaceOnUse" x1="0" y1="50" x2="0" y2="266"><stop offset="0" stop-color="#8aa4ff"/><stop offset="0.35" stop-color="#b79cff"/><stop offset="0.7" stop-color="#5eead4"/><stop offset="1" stop-color="#ff9ac2"/></linearGradient>
+    <filter id="soft" x="-20%" y="-30%" width="140%" height="180%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.45"/></filter>
   </defs>
-
-  <rect width="900" height="230" rx="20" fill="url(#bg)"/>
-  <rect width="900" height="230" rx="20" fill="url(#dots)"/>
-  <ellipse cx="770" cy="18" rx="240" ry="130" fill="url(#glowA)"/>
-  <ellipse cx="120" cy="215" rx="230" ry="120" fill="url(#glowB)"/>
-
-  <rect x="1.25" y="1.25" width="897.5" height="227.5" rx="19" fill="none" stroke="#ffffff" stroke-opacity=".09" stroke-width="1.5"/>
-  <path d="M20 1.25h860" stroke="url(#edge)" stroke-width="3" stroke-linecap="round"/>
-
-  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
-    <text x="48" y="104" font-size="44" font-weight="800" letter-spacing="-1.1" fill="url(#title)">Gemini — в DeepSeek Harness</text>
-    <text x="49" y="140" font-size="18" font-weight="500" fill="#9fb0c9">Gemini 3.x Flash внутри DSH — и в любом клиенте, который говорит на OpenAI</text>
-
-    <g font-size="13" font-weight="500">
-      <rect x="48" y="166" width="176" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
-      <text x="136" y="186" text-anchor="middle" fill="#c9d2e3">свой выход в сеть</text>
-
-      <rect x="236" y="166" width="150" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
-      <text x="311" y="186" text-anchor="middle" fill="#c9d2e3">квота в двух окнах</text>
-
-      <rect x="398" y="166" width="112" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
-      <text x="454" y="186" text-anchor="middle" fill="#c9d2e3">веб-поиск</text>
-
-      <rect x="522" y="166" width="150" height="30" rx="15" fill="#ffffff" fill-opacity=".045" stroke="#ffffff" stroke-opacity=".09"/>
-      <text x="597" y="186" text-anchor="middle" fill="#c9d2e3">без зависимостей</text>
-    </g>
-
+  <rect width="1200" height="320" fill="url(#bg)"/><rect width="1200" height="320" fill="url(#dots)"/>
+  <rect width="1200" height="320" fill="url(#gA)"/><rect width="1200" height="320" fill="url(#gB)"/><rect width="1200" height="320" fill="url(#gC)"/>
+  <g font-family="'Segoe UI Variable Display','Segoe UI',Inter,Helvetica,Arial,sans-serif">
+    <text x="66" y="136" font-size="78" font-weight="700" letter-spacing="-3" fill="url(#word)">gemini<tspan fill="#5eead4">→</tspan>dsh</text>
+    <text x="72" y="186" font-size="21" fill="#a9adc0">Gemini в DSH и в любом клиенте, который говорит на OpenAI</text>
+  </g>
+  <g font-family="Consolas,'Cascadia Mono',SFMono-Regular,Menlo,monospace" font-size="12">
+    <g transform="translate(72 226)"><rect width="168" height="34" rx="17" fill="#fff" fill-opacity=".04" stroke="#8aa4ff" stroke-opacity=".38"/><circle cx="17" cy="17" r="4" fill="#8aa4ff"/><text x="30" y="21.5" fill="#e9ebf5">свой выход в сеть</text></g>
+    <g transform="translate(250 226)"><rect width="176" height="34" rx="17" fill="#fff" fill-opacity=".04" stroke="#b79cff" stroke-opacity=".38"/><circle cx="17" cy="17" r="4" fill="#b79cff"/><text x="30" y="21.5" fill="#e9ebf5">квота в двух окнах</text></g>
+    <g transform="translate(436 226)"><rect width="111" height="34" rx="17" fill="#fff" fill-opacity=".04" stroke="#5eead4" stroke-opacity=".38"/><circle cx="17" cy="17" r="4" fill="#5eead4"/><text x="30" y="21.5" fill="#e9ebf5">веб-поиск</text></g>
+    <g transform="translate(557 226)"><rect width="161" height="34" rx="17" fill="#fff" fill-opacity=".04" stroke="#ff9ac2" stroke-opacity=".38"/><circle cx="17" cy="17" r="4" fill="#ff9ac2"/><text x="30" y="21.5" fill="#e9ebf5">без зависимостей</text></g>
+  </g>
+  <path d="M770 50 V250" stroke="url(#seam)" stroke-width="2" stroke-linecap="round" opacity="0.8" fill="none"/>
+  <circle cx="770" cy="50" r="5" fill="#8aa4ff"/>
+  <circle cx="770" cy="122" r="5" fill="#b79cff"/>
+  <circle cx="770" cy="194" r="5" fill="#5eead4"/>
+  <circle cx="770" cy="266" r="5" fill="#ff9ac2"/>
+  <g font-family="'Segoe UI',Inter,Helvetica,Arial,sans-serif">
+    <g transform="translate(800 24)" filter="url(#soft)"><rect width="316" height="52" rx="14" fill="#12131f" stroke="#8aa4ff" stroke-opacity=".34"/><rect x="0" y="10" width="4" height="32" rx="2" fill="#8aa4ff"/><text x="24" y="23" font-size="14" font-weight="600" fill="#eef0fa">DSH · OpenAI-клиент</text><text x="24" y="40" font-size="11.5" fill="#8a8fa6" font-family="Consolas,'Cascadia Mono',monospace">POST /v1/chat/completions</text></g>
+    <g transform="translate(818 96)" filter="url(#soft)"><rect width="316" height="52" rx="14" fill="#12131f" stroke="#b79cff" stroke-opacity=".34"/><rect x="0" y="10" width="4" height="32" rx="2" fill="#b79cff"/><text x="24" y="23" font-size="14" font-weight="600" fill="#eef0fa">мост</text><text x="24" y="40" font-size="11.5" fill="#8a8fa6" font-family="Consolas,'Cascadia Mono',monospace">127.0.0.1:8787</text></g>
+    <g transform="translate(818 168)" filter="url(#soft)"><rect width="316" height="52" rx="14" fill="#12131f" stroke="#5eead4" stroke-opacity=".34"/><rect x="0" y="10" width="4" height="32" rx="2" fill="#5eead4"/><text x="24" y="23" font-size="14" font-weight="600" fill="#eef0fa">шим выхода</text><text x="24" y="40" font-size="11.5" fill="#8a8fa6" font-family="Consolas,'Cascadia Mono',monospace">127.0.0.1:8789</text></g>
+    <g transform="translate(800 240)" filter="url(#soft)"><rect width="316" height="52" rx="14" fill="#12131f" stroke="#ff9ac2" stroke-opacity=".34"/><rect x="0" y="10" width="4" height="32" rx="2" fill="#ff9ac2"/><text x="24" y="23" font-size="14" font-weight="600" fill="#eef0fa">Gemini</text><text x="24" y="40" font-size="11.5" fill="#8a8fa6" font-family="Consolas,'Cascadia Mono',monospace">Google Cloud Code</text></g>
   </g>
 </svg>

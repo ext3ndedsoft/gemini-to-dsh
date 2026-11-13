@@ -34,8 +34,10 @@ node install.mjs
 That copies the bridge into `~/.dsh/bridge`, the panel into
 `~/.dsh/profiles/web/plugins/quota-overlay`, and appends the plugin entry to
 `~/.dsh/profiles/web/cordis.patch.yml` — without touching an entry that is already there.
-Safe to run twice. Flags: `--dry-run`, `--force`, `--bridge-only`, `--plugin-only`,
-`--dsh-home <dir>`, `--profile <name>`.
+Safe to run twice; a second run updates changed files (your `.env` and `ag-egress.json`
+are never touched). Flags: `--dry-run`, `--keep` (do not overwrite changed files),
+`--uninstall`, `--with web-search,lean-context` / `--all`, `--bridge-only`,
+`--plugin-only`, `--dsh-home <dir>`, `--profile <name>`.
 
 If you would rather see what it does, steps 2–5 are the same thing by hand.
 
