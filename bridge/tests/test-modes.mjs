@@ -125,7 +125,7 @@ try {
 	check('quota: weekly bucket is read', summary.groups[0].weekly[0].remaining === 0.62);
 	check('quota: five hour bucket is read', summary.groups[0].fiveHour[0].remaining === 0.98);
 	check('quota: empty groups are dropped', summary.groups.length === 1);
-	check('quota: the hub identity is sent', /^antigravity\/hub\/[\d.]+ \(aidev_client; os_type=\w+; arch=\w+\)$/.test(calls[0].ua), calls[0].ua);
+	check('quota: the hub identity is sent', /^antigravity\/hub\/[\d.]+ \(os_type=\w+; arch=\w+; aidev_client\)$/.test(calls[0].ua), calls[0].ua);
 	check('quota: the project travels in the body', calls[0].body.project === 'proj');
 	check(
 		'quota: the summary path is used',

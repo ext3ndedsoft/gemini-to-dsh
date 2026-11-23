@@ -108,8 +108,21 @@ async function streamed() {
   console.log('stream text:', JSON.stringify(text), 'done:', sawDone, 'usage:', JSON.stringify(usage));
 }
 
+async function search() {
+  const res = await fetch(BASE + '/v1/search', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query: 'Node.js 24 latest release version', maxResults: 5 }),
+  });
+  if (!res.ok) throw new Error('search ' + res.status + ' ' + (await res.text()));
+  const json = await res.json();
+  console.log('search:', json.model, 'sources:', json.sources?.length, 'first:', json.sources?.[0]?.url);
+  if (!json.sources?.length) throw new Error('search returned no sources');
+}
+
 await models();
 await plainText();
 await toolRoundTrip();
 await streamed();
+await search();
 console.log('SMOKE OK');

@@ -16,11 +16,11 @@ No dependencies, Node 20+.
 
 ## What you get
 
-- **Gemini in DSH** — streaming, tools, images, thinking.
+- **Gemini in DSH** — streaming, tools, images, thinking, effort routing, and KV-cache keep-alive.
 - **Several accounts** — a request goes where the most quota is left, before a `429`.
 - **Network egress** — `DNS`, `Proxy`, `VPN` or `Direct`; a watchdog routes around a dead channel on its own.
-- **Quota panel** — the five-hour and weekly window of every account, and the egress switch.
-- **Web search** and **lean-context** — optional, as separate plugins.
+- **Quota panel** — the five-hour and weekly window of every account, the egress switch, and the default `web-search` model selector.
+- **Web search** (via Cloud Code Google Search grounding or external providers) and **lean-context** — optional, as separate plugins.
 
 <p align="center">
   <img src="assets/panel-dns.png?v=4" alt="Panel: DNS mode" width="384">

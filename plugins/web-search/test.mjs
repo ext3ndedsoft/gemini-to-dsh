@@ -62,14 +62,15 @@ const tidied = tidySources([
   { url: "https://example.com/a/?utm_source=x&utm_medium=y", title: "One", snippet: "s" },
   { url: "https://www.example.com/a", title: "One again", snippet: "s" },
   { url: "https://duckduckgo.com/l/?uddg=x", title: "search host", snippet: "s" },
+  { url: "https://cloud.google.com/vertex-ai/docs", title: "Vertex AI", snippet: "docs" },
   { url: "https://example.org/b#frag", title: "Two", snippet: "" },
   { url: "ftp://example.org/c", title: "not http", snippet: "s" },
   { url: "https://example.net/d", title: "", snippet: "" }
 ]);
 assert.deepEqual(
   tidied.map((s) => s.url),
-  ["https://example.com/a", "https://example.org/b"],
-  "tracking dropped, www deduped, search hosts and non-http skipped"
+  ["https://example.com/a", "https://cloud.google.com/vertex-ai/docs", "https://example.org/b"],
+  "tracking dropped, www deduped, search hosts and non-http skipped, cloud.google.com kept"
 );
 
 /* ------------------------------------------------------- keyed adapter + cache */
@@ -124,6 +125,69 @@ const [a, b] = await Promise.all([
 ]);
 assert.equal(calls.length, 2, "single-flight: the concurrent duplicate did not hit upstream");
 assert.deepEqual(a.sources, b.sources);
+
+/* ------------------------------------------------------- antigravity adapter */
+
+const agCalls = [];
+const agMock = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (chunk) => (body += chunk));
+  req.on("end", () => {
+    agCalls.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body || "{}") });
+    if (req.url === "/v1/search" && agCalls.length === 1) {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(
+        JSON.stringify({
+          object: "search.result",
+          content: "Node.js 24.22.3 is the latest LTS release.",
+          sources: [
+            { url: "https://nodejs.org/en/download?utm_source=ag", title: "Node.js", snippet: "Download v24.22.3." },
+            { url: "https://cloud.google.com/nodejs/docs", title: "Google Cloud", snippet: "Node.js runtime." }
+          ],
+          truncated: false
+        })
+      );
+    }
+    res.writeHead(502, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: { message: "bridge down" } }));
+  });
+});
+await new Promise((resolve) => agMock.listen(0, "127.0.0.1", resolve));
+const agPort = agMock.address().port;
+
+fs.writeFileSync(
+  CONFIG,
+  JSON.stringify({
+    order: ["antigravity", "serper"],
+    providers: {
+      antigravity: { baseUrl: `http://127.0.0.1:${agPort}`, key: "ag-secret" },
+      serper: { key: "test-key", baseUrl: `http://127.0.0.1:${port}` }
+    }
+  })
+);
+assert.deepEqual(plugin.searchPlan(), ["antigravity", "serper", "duckduckgo"], "plan puts antigravity first");
+
+const agRes = await provider.search({ query: "node 24 latest", maxResults: 5 });
+assert.equal(agCalls.length, 1);
+assert.equal(agCalls[0].auth, "Bearer ag-secret");
+assert.equal(agRes.content, "Node.js 24.22.3 is the latest LTS release.");
+assert.deepEqual(
+  agRes.sources.map((s) => s.url),
+  ["https://nodejs.org/en/download", "https://cloud.google.com/nodejs/docs"]
+);
+
+const agCached = await provider.search({ query: "NODE 24 LATEST", maxResults: 5 });
+assert.equal(agCalls.length, 1, "antigravity grounded summary and sources served from cache");
+assert.equal(agCached.content, agRes.content);
+
+const callsBeforeFallback = calls.length;
+const agFallback = await provider.search({ query: "fallback after bridge 502", maxResults: 5 });
+assert.equal(agCalls.length, 2, "antigravity attempted first");
+assert.equal(calls.length, callsBeforeFallback + 1, "fell back to serper when antigravity returned 502");
+assert.equal(agFallback.content, undefined);
+assert.equal(agFallback.sources[0].url, "https://docs.example.com/guide");
+
+agMock.close();
 
 /* --------------------------------------------------------------- throttled DDG */
 

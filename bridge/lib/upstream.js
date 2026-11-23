@@ -3,21 +3,45 @@
  * calls the bridge exposes (/v1/models and the project id).
  */
 
-import { noteRequest,
+import crypto from 'node:crypto';
+import {
   accountMeta,
   accountModels,
   cloudPost,
   loadStore,
   markCooling,
   networkReason,
+  noteRequest,
   orderedAccounts,
   primaryAccount,
   recordLatency,
 } from '../accounts.js';
-import { DEFAULT_PROJECT, log, resolveModel } from './config.js';
+import { cancelKeepAlive } from './cache-keepalive.js';
+import {
+  DEFAULT_PROJECT,
+  UPSTREAM_TIMEOUT_MS,
+  UPSTREAM_TOTAL_MS,
+  isConfiguredAlias,
+  log,
+  resolveModel,
+} from './config.js';
 import { resetHint } from './http.js';
 import { toContents } from './messages.js';
 import { functionCallingConfig, thinkingConfig, toGeminiSchema, toolDeclarations } from './schema.js';
+
+const ANTIGRAVITY_IDENTITY =
+  'You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.';
+
+function normalizeSystemIdentity(text) {
+  if (!text || process.env.AG_IDENTITY_REWRITE === '0') return text;
+  if (!/DeepSeek Harness/i.test(text)) return text;
+  return text
+    .replace(
+      /^You are an AI agent powered by DeepSeek Harness\.(?:\s*\n+You are a coding agent powered by the [^\n]+ model\.)?/i,
+      ANTIGRAVITY_IDENTITY,
+    )
+    .replace(/DeepSeek Harness/gi, 'Antigravity');
+}
 
 export async function getProject(account) {
   const acc = account || primaryAccount();
@@ -42,16 +66,39 @@ export async function getCatalog() {
   }
 }
 
+function fnv1a64Signed(text) {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  for (const byte of Buffer.from(String(text || ''), 'utf8')) {
+    hash ^= BigInt(byte);
+    hash = (hash * prime) & mask;
+  }
+  return BigInt.asIntN(64, hash).toString(10);
+}
+
+function deriveSessionId(body, model, systemText, contents) {
+  if (typeof body.__sessionId === 'string' && body.__sessionId.trim()) {
+    const raw = body.__sessionId.trim().slice(0, 128);
+    return /^-?\d{1,20}$/.test(raw) ? raw : fnv1a64Signed(raw);
+  }
+  const first = Array.isArray(contents) && contents.length ? JSON.stringify(contents[0]).slice(0, 2048) : '';
+  const seed = `${model}|${(systemText || '').slice(0, 1024)}|${first}`;
+  return fnv1a64Signed(seed);
+}
+
 export function buildRequest(body) {
   const { system, contents } = toContents(body.messages);
 
   // The caller's messages are translated as they are: no injected prologue, no
-  // rewritten system instruction. What the client sends is what the model sees.
+  // safety override. Only DSH's own harness boilerplate is normalized to the
+  // Antigravity client identity when present.
   const request = { contents };
 
   // toContents() collects every system/developer message into one list; Google
   // wants a single instruction block, so they are joined in order.
-  if (system.length) request.systemInstruction = { parts: [{ text: system.join('\n\n') }] };
+  const systemText = normalizeSystemIdentity(system.join('\n\n'));
+  if (systemText) request.systemInstruction = { parts: [{ text: systemText }] };
 
   const tools = toolDeclarations(body.tools);
   if (tools) {
@@ -60,13 +107,18 @@ export function buildRequest(body) {
     if (toolConfig) request.toolConfig = toolConfig;
   }
 
+  const model = resolveModel(body.model, { raw: body.__rawModel, effort: body.reasoning_effort });
+  // Pin Cloud Code's backend KV-cache routing to the same session across turns
+  // and socket reconnects instead of hopping pods on every new TCP connection.
+  request.sessionId = deriveSessionId(body, model, systemText, contents);
+
   const generationConfig = {};
   if (typeof body.temperature === 'number') generationConfig.temperature = body.temperature;
   if (typeof body.top_p === 'number') generationConfig.topP = body.top_p;
   if (typeof body.max_tokens === 'number') generationConfig.maxOutputTokens = body.max_tokens;
   else if (typeof body.max_completion_tokens === 'number') generationConfig.maxOutputTokens = body.max_completion_tokens;
   if (Array.isArray(body.stop) && body.stop.length) generationConfig.stopSequences = body.stop.slice(0, 5);
-  generationConfig.thinkingConfig = thinkingConfig(body.reasoning_effort, generationConfig.maxOutputTokens, body.__thinking);
+  generationConfig.thinkingConfig = thinkingConfig(body.reasoning_effort, generationConfig.maxOutputTokens, body.__thinking, model);
   if (body.response_format) {
     if (body.response_format.type === 'json_object' || body.response_format.type === 'json_schema') {
       generationConfig.responseMimeType = 'application/json';
@@ -79,15 +131,27 @@ export function buildRequest(body) {
   }
   if (Object.keys(generationConfig).length) request.generationConfig = generationConfig;
 
-  return { model: resolveModel(body.model), project: body.__project || null, request };
+  const requestType = tools || systemText ? 'agent' : 'chat';
+  return {
+    project: body.__project || null,
+    requestId: `${requestType}/${crypto.randomUUID()}`,
+    model,
+    userPromptId: `bot-${crypto.randomUUID()}`,
+    userAgent: 'antigravity',
+    requestType,
+    request,
+  };
 }
 
+const PERMANENT_403 = /disabled in this account|violation of Terms of Service|Verify your account/i;
+
 /**
- * One attempt, walking the account pool. A dead token or a quota/geo refusal on
- * one account must not fail the request while another account can still serve it.
+ * One attempt, walking the account pool. A dead token or a quota/geo/capacity
+ * refusal on one account must not fail the request while another account can
+ * still serve it.
  */
-export async function upstream(body, signal) {
-  const model = resolveModel(body.model);
+export async function upstream(body, signal, { totalBudgetMs = UPSTREAM_TOTAL_MS } = {}) {
+  const model = resolveModel(body.model, { raw: body.__rawModel, effort: body.reasoning_effort });
   const forced = body.account ? loadStore().accounts.filter((acc) => acc.id === body.account) : [];
   const candidates = forced.length ? forced : orderedAccounts(model);
   if (!candidates.length) {
@@ -95,11 +159,18 @@ export async function upstream(body, signal) {
   }
 
   let last = null;
+  const deadline = Date.now() + Math.max(15_000, totalBudgetMs);
   // Assembled once: the body does not depend on the account, only the project id
-  // does, and rebuilding it per candidate re-ran the schema/persona conversion for
-  // every rotation and retry.
+  // does, and rebuilding it per candidate re-ran the schema conversion for every
+  // rotation and retry.
   const payload = buildRequest(body);
+  cancelKeepAlive(payload.request.sessionId);
   for (let index = 0; index < candidates.length; index += 1) {
+    const remaining = deadline - Date.now();
+    if (index > 0 && remaining < 10_000) {
+      log(`upstream budget exhausted before trying account ${candidates[index].id} for ${model}`);
+      break;
+    }
     const account = candidates[index];
     payload.project = (await getProject(account)) || DEFAULT_PROJECT;
 
@@ -107,7 +178,12 @@ export async function upstream(body, signal) {
     const startedAt = Date.now();
     noteRequest(account);
     try {
-      res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, { signal });
+      const isImg = /(?:^|[-_/])image(?:$|[-_/])/.test(model);
+      const perTry = Math.min(isImg ? 90_000 : UPSTREAM_TIMEOUT_MS, Math.max(10_000, deadline - Date.now()));
+      res = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, {
+        signal,
+        timeoutMs: perTry,
+      });
     } catch (err) {
       // A cancelled turn is not the account's fault: the person pressed stop (or
       // walked away), so there is nothing to cool down and nothing to blame.
@@ -118,7 +194,10 @@ export async function upstream(body, signal) {
       recordLatency(account, Date.now() - startedAt);
       log(`account ${account.id} threw for ${model} after ${Date.now() - startedAt}ms: ${networkReason(err)}`);
       markCooling(account, model, Date.now() + 300_000);
-      if (index === candidates.length - 1) throw err;
+      if (index === candidates.length - 1) {
+        if (last) return last;
+        throw err;
+      }
       continue;
     }
 
@@ -128,26 +207,54 @@ export async function upstream(body, signal) {
       try {
         res.__agAccount = account;
         res.__agStartedAt = startedAt;
+        res.__agPayload = payload;
       } catch {
         /* frozen response object: timing is optional */
       }
       return res;
     }
     last = res;
-    const rotate = res.status === 429 || res.status === 401 || res.status === 403;
+    const rotate =
+      res.status === 429 ||
+      res.status === 401 ||
+      res.status === 403 ||
+      res.status === 503 ||
+      res.status === 500 ||
+      res.status === 502;
     if (rotate) {
       // Record the wall even when there is nobody left to rotate to: this account
       // just said it cannot serve this model, and that fact is what stops the next
       // turn from walking into the same 429. A copy is read so the caller still
       // gets the original body to build its own message from.
       const text = await res.clone().text().catch(() => '');
-      markCooling(account, model, resetHint(text) || Date.now() + 120_000);
+      let coolUntil = resetHint(text);
+      if (!coolUntil) {
+        if (res.status === 403 && PERMANENT_403.test(text)) coolUntil = Date.now() + 6 * 3_600_000;
+        else if (res.status >= 500) coolUntil = Date.now() + 60_000;
+        else coolUntil = Date.now() + 120_000;
+      }
+      markCooling(account, model, coolUntil);
       if (index < candidates.length - 1) {
         log(`rotating past account ${account.id} for ${model}: upstream ${res.status}`);
         continue;
       }
     }
-    return res;
+    break;
+  }
+
+  // If an aliased model (e.g. gemini-3.8-flash -> gemini-3.8-flash-tiered) ran out
+  // of capacity or quota across the whole pool, step back once to the raw model id.
+  if (
+    last &&
+    (last.status === 503 || last.status === 429) &&
+    !body.__rawModel &&
+    body.model &&
+    isConfiguredAlias(body.model) &&
+    resolveModel(body.model) !== body.model &&
+    deadline - Date.now() >= 15_000
+  ) {
+    log(`all accounts exhausted for alias ${model}; falling back to raw model ${body.model}`);
+    return upstream({ ...body, __rawModel: true }, signal, { totalBudgetMs: deadline - Date.now() });
   }
   return last;
 }
@@ -158,6 +265,19 @@ export async function upstream(body, signal) {
  * gap between two payloads, not for the whole turn.
  */
 const STREAM_IDLE_MS = Number(process.env.AG_STREAM_IDLE_MS || 90_000);
+
+/**
+ * A thinking model streams nothing while it thinks, and `high` is 24576 tokens.
+ * Keep this strictly below DSH's 300 s streamIdleTimeoutMs so the bridge's own
+ * stalled-thought retry fires before the client kills the connection.
+ */
+const STREAM_IDLE_THINKING_MS = Number(process.env.AG_STREAM_IDLE_THINKING_MS || 180_000);
+
+/** Silence allowed between payloads, which depends on whether the model is thinking. */
+export function idleBudget(body) {
+  const mode = body && body.__thinking;
+  return mode === 'off' || mode === 'minimal' ? STREAM_IDLE_MS : STREAM_IDLE_THINKING_MS;
+}
 
 function readWithIdle(reader, idleMs) {
   let timer;

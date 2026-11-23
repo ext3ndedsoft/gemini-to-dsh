@@ -43,10 +43,10 @@ the app's language server gets every group, the plain CLI identity gets a reduce
 request carries
 
 ```
-User-Agent: antigravity/hub/2.26.0 (aidev_client; os_type=windows; arch=amd64)
+User-Agent: antigravity/hub/2.34.0 (os_type=windows; arch=amd64; aidev_client)
 ```
 
-with the version floored at `2.26.0` (`AG_HUB_VERSION`) — older hubs do not receive the newer
+with the version defaulting to `2.34.0` (`AG_HUB_VERSION` / `AG_CLIENT_VERSION`) — older hubs do not receive the newer
 groups. The lookup walks `daily-cloudcode-pa`, then `cloudcode-pa`, then the sandbox host; a `403`
 on a request that carried a project is retried once without it, exactly as the desktop app does;
 a `401` ends the lookup immediately, because another host will reject the same credential.

@@ -13,6 +13,7 @@ import path from 'node:path';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-images-'));
 process.env.AG_IMAGE_DIR = dir;
+process.env.AG_IMAGE_AUTO = '1';
 
 // Imported after the env var exists: lib/config.js reads it at module load.
 const { answerText, isImageModel, routeFor, saveImage, wantsImage } = await import('../lib/images.js');

@@ -11,7 +11,7 @@
  * degrades to "no weekly bars" instead of an error.
  */
 
-import { log } from './config.js';
+import { CLIENT_VERSION, log } from './config.js';
 
 const SUMMARY_PATH = '/v1internal:retrieveUserQuotaSummary';
 
@@ -23,7 +23,7 @@ const HOSTS = [
 ];
 
 /** Hub versions below this floor do not receive every quota group. */
-const HUB_VERSION = process.env.AG_HUB_VERSION || '2.26.0';
+const HUB_VERSION = process.env.AG_HUB_VERSION || CLIENT_VERSION;
 const TIMEOUT_MS = Number(process.env.AG_QUOTA_TIMEOUT_MS || 15000);
 
 function platformTag() {
@@ -40,7 +40,7 @@ function archTag() {
 
 /** The language-server identity of the Antigravity app. Google gates quota groups on it. */
 export function hubUserAgent() {
-  return `antigravity/hub/${HUB_VERSION} (aidev_client; os_type=${platformTag()}; arch=${archTag()})`;
+  return `antigravity/hub/${HUB_VERSION} (os_type=${platformTag()}; arch=${archTag()}; aidev_client)`;
 }
 
 function normalizeBucket(raw) {

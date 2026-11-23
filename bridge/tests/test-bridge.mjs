@@ -7,17 +7,19 @@
 
 import assert from 'node:assert/strict';
 
+import { buildPingPayload } from '../lib/cache-keepalive.js';
 import { retryBody } from '../lib/stream.js';
 import { buildRequest } from '../lib/upstream.js';
 import { thinkingConfig, toGeminiSchema, toolDeclarations } from '../lib/schema.js';
+import { finalizeSources, parseSearchResponse } from '../lib/search.js';
 import { ThinkingStream, splitThinking } from '../lib/thinking.js';
 
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+async function test(name, fn) {
   try {
-    fn();
+    await fn();
     passed += 1;
     console.log(`  ok   ${name}`);
   } catch (error) {
@@ -186,8 +188,8 @@ test('thinking never eats the whole answer window', () => {
   }
 });
 
-test('forced modes turn thoughts off for a retry', () => {
-  assert.deepEqual(thinkingConfig('high', 8192, 'minimal'), { thinkingBudget: 128, includeThoughts: false });
+test('forced modes turn thoughts off or minimal for a retry', () => {
+  assert.deepEqual(thinkingConfig('high', 8192, 'minimal'), { thinkingBudget: 128, includeThoughts: true });
   assert.deepEqual(thinkingConfig('high', 8192, 'off'), { thinkingBudget: 0, includeThoughts: false });
 });
 
@@ -228,6 +230,141 @@ test('system messages become a single text part', () => {
   assert.equal(typeof parts[0].text, 'string');
   assert.equal(parts[0].text, 'first rule\n\nsecond rule');
   assert.equal(request.safetySettings, undefined, 'the bridge must not override upstream safety defaults');
+});
+
+test('DSH harness boilerplate normalizes to Antigravity identity without touching custom rules', () => {
+  const { request } = buildRequest({
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are an AI agent powered by DeepSeek Harness.\n\nYou are a coding agent powered by the gemini-4-hydrogen-sonar model.\n\nFollow project rules.',
+      },
+      { role: 'user', content: 'hello' },
+    ],
+  });
+  const text = request.systemInstruction?.parts?.[0]?.text || '';
+  assert.ok(text.startsWith('You are Antigravity, a powerful agentic AI coding assistant'));
+  assert.ok(!/DeepSeek Harness/i.test(text));
+  assert.ok(text.includes('Follow project rules.'));
+});
+
+console.log('\nsession affinity & tool cache');
+
+test('buildRequest derives stable FNV-1a int64 sessionId and Antigravity envelope across turns', () => {
+  const turn1 = buildRequest({
+    model: 'gemini-4-hydrogen',
+    messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hello world' }],
+  });
+  const turn2 = buildRequest({
+    model: 'gemini-4-hydrogen',
+    messages: [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hello world' },
+      { role: 'assistant', content: 'hi' },
+      { role: 'user', content: 'next step' },
+    ],
+  });
+  assert.match(turn1.request.sessionId, /^-?\d+$/);
+  assert.equal(turn1.request.sessionId, turn2.request.sessionId);
+  assert.equal(turn1.userAgent, 'antigravity');
+  assert.equal(turn1.requestType, 'agent');
+  assert.match(turn1.requestId, /^agent\/[0-9a-f-]+$/i);
+  assert.match(turn1.userPromptId, /^bot-[0-9a-f-]+$/i);
+});
+
+test('buildRequest hashes explicit __sessionId deterministically into int64 format', () => {
+  const req1 = buildRequest({
+    model: 'gemini-4-hydrogen',
+    __sessionId: 'dsh-sess-42',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+  const req2 = buildRequest({
+    model: 'gemini-4-hydrogen',
+    __sessionId: 'dsh-sess-42',
+    messages: [{ role: 'user', content: 'different' }],
+  });
+  assert.match(req1.request.sessionId, /^-?\d+$/);
+  assert.equal(req1.request.sessionId, req2.request.sessionId);
+  assert.notEqual(req1.request.sessionId, 'dsh-sess-42');
+});
+
+test('toolDeclarations caches identical tool schemas', () => {
+  const tools = [{ type: 'function', function: { name: 'read', parameters: sampleParameters } }];
+  const first = toolDeclarations(tools);
+  const second = toolDeclarations([{ type: 'function', function: { name: 'read', parameters: sampleParameters } }]);
+  assert.equal(first, second);
+});
+
+test('buildPingPayload preserves thinkingConfig, sessionId, and Antigravity envelope while capping output to 1 token', () => {
+  const req = buildRequest({
+    model: 'gemini-4-hydrogen',
+    reasoning_effort: 'high',
+    max_tokens: 65536,
+    __sessionId: 'ag-keepalive-test',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+  const ping = buildPingPayload(req);
+  assert.equal(ping.request.sessionId, req.request.sessionId);
+  assert.equal(ping.userAgent, 'antigravity');
+  assert.equal(ping.requestType, req.requestType);
+  assert.notEqual(ping.requestId, req.requestId);
+  assert.equal(ping.request.generationConfig.maxOutputTokens, 1);
+  assert.deepEqual(ping.request.generationConfig.thinkingConfig, req.request.generationConfig.thinkingConfig);
+});
+
+console.log('\nweb search grounding');
+
+test('parseSearchResponse extracts answer, queries, and chunk snippets from groundingSupports', () => {
+  const parsed = parseSearchResponse({
+    response: {
+      candidates: [
+        {
+          content: {
+            role: 'model',
+            parts: [{ thought: true, text: 'internal' }, { text: 'Node 24.22.3 is latest.' }],
+          },
+          groundingMetadata: {
+            webSearchQueries: ['node 24 latest'],
+            groundingChunks: [
+              { web: { uri: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc', title: 'nodejs.org' } },
+              { web: { uri: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/def', title: 'endoflife.date' } },
+            ],
+            groundingSupports: [
+              { segment: { text: 'Node 24.22.3 released Nov 11, 2026.' }, groundingChunkIndices: [0, 1] },
+              { segment: { text: 'Maintenance LTS until 2028.' }, groundingChunkIndices: [1] },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(parsed.content, 'Node 24.22.3 is latest.');
+  assert.deepEqual(parsed.queries, ['node 24 latest']);
+  assert.equal(parsed.rawSources.length, 2);
+  assert.equal(parsed.rawSources[0].snippet, 'Node 24.22.3 released Nov 11, 2026.');
+  assert.equal(parsed.rawSources[1].snippet, 'Node 24.22.3 released Nov 11, 2026. Maintenance LTS until 2028.');
+});
+
+await test('finalizeSources resolves redirects, dedupes merged URLs, and sets truncated', async () => {
+  const map = {
+    'https://vertexaisearch.cloud.google.com/grounding-api-redirect/1': 'https://nodejs.org/en/download',
+    'https://vertexaisearch.cloud.google.com/grounding-api-redirect/2': 'https://nodejs.org/en/download',
+    'https://vertexaisearch.cloud.google.com/grounding-api-redirect/3': 'https://endoflife.date/nodejs',
+  };
+  const out = await finalizeSources(
+    [
+      { url: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/1', title: 'nodejs.org', snippet: 'First.' },
+      { url: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/2', title: 'nodejs.org', snippet: 'Second.' },
+      { url: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/3', title: 'endoflife.date', snippet: 'EOL.' },
+    ],
+    1,
+    { resolveUrl: async (u) => map[u] || u },
+  );
+  assert.equal(out.truncated, true);
+  assert.equal(out.sources.length, 1);
+  assert.equal(out.sources[0].url, 'https://nodejs.org/en/download');
+  assert.equal(out.sources[0].snippet, 'First. Second.');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

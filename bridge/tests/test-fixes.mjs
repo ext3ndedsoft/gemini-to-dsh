@@ -8,7 +8,9 @@
  */
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -285,6 +287,127 @@ await test('a json_schema response format reaches upstream as a Gemini schema', 
   });
   assert.equal(built.request.generationConfig.responseMimeType, 'application/json');
   assert.equal(built.request.generationConfig.responseSchema.type, 'OBJECT');
+});
+
+await test('an older turn with an evicted signature falls back to placeholder instead of 400', () => {
+  const contents = toContents([
+    { role: 'user', content: 'old' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call_evicted', type: 'function', function: { name: 'read', arguments: '{"file":"missing"}' } }] },
+    { role: 'tool', tool_call_id: 'call_evicted', content: 'ok' },
+    { role: 'user', content: 'new' },
+  ]);
+  assert.equal(callPartOf(contents).thoughtSignature, PLACEHOLDER_SIGNATURE);
+});
+
+await test('xhigh caps at 24576 on Gemini and 32768 on Claude, and small Claude windows disable thinking', () => {
+  assert.equal(thinkingConfig('xhigh', 65536, undefined, 'gemini-4-neon-xhigh').thinkingBudget, 24576);
+  assert.equal(thinkingConfig('xhigh', 65536, undefined, 'claude-opus-5-5-high').thinkingBudget, 32768);
+  assert.deepEqual(thinkingConfig('high', 1500, undefined, 'claude-sonnet-5-5-high'), { thinkingBudget: 0, includeThoughts: false });
+});
+
+await test('setPinned(null) clears pinned on disk instead of resurrecting it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-unpin-'));
+  const file = path.join(dir, 'accounts.json');
+  const creds = path.join(dir, 'oauth_creds.json');
+  fs.writeFileSync(creds, JSON.stringify({ access_token: 'fake', refresh_token: 'fake', expiry_date: Date.now() + 3600e3 }));
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: [{ id: 'acc_one', email: 'a@example.com', refresh_token: 'fake' }],
+      pinned: 'acc_one',
+    }),
+  );
+  const script = `
+    import fs from 'node:fs';
+    process.env.AG_ACCOUNTS_FILE = ${JSON.stringify(file)};
+    process.env.AG_CREDS_FILE = ${JSON.stringify(creds)};
+    const mod = await import(${JSON.stringify(pathToFileURL(path.join(root, 'accounts.js')).href)});
+    mod.loadStore();
+    mod.setPinned(null);
+    const saved = JSON.parse(fs.readFileSync(process.env.AG_ACCOUNTS_FILE, 'utf8'));
+    console.log(JSON.stringify({ pinned: saved.pinned }));
+  `;
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+    const result = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(result.pinned, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+console.log('\nhub models & effort routing');
+
+await test('USER_AGENT carries the hub identity required for Antigravity 2.34.0', async () => {
+  const { USER_AGENT } = await import('../accounts.js');
+  assert.match(USER_AGENT, /^antigravity\/hub\/2\.34\.0 \(os_type=\w+; arch=\w+; aidev_client\)$/);
+});
+
+await test('Gemini 4 family names resolve by reasoning_effort', async () => {
+  const { resolveModel } = await import('../lib/config.js');
+  assert.equal(resolveModel('gemini-4-neon', { effort: 'xhigh' }), 'gemini-4-neon-xhigh');
+  assert.equal(resolveModel('gemini-4-neon', { effort: 'low' }), 'gemini-4-neon-low');
+  assert.equal(resolveModel('gemini-4-argon', { effort: 'xhigh' }), 'gemini-4-argon-high');
+  assert.equal(resolveModel('gemini-4-hydrogen', { effort: 'high' }), 'gemini-4-hydrogen-high');
+  assert.equal(resolveModel('claude-opus-5-5', { effort: 'medium' }), 'claude-opus-5-5-medium');
+});
+
+await test('orderedAccounts skips accounts whose cached catalog lacks the requested model', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-entitle-'));
+  const file = path.join(dir, 'accounts.json');
+  const creds = path.join(dir, 'oauth_creds.json');
+  const egress = path.join(dir, 'egress.json');
+  const stub = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const auth = req.headers.authorization || '';
+      if (req.url.includes('loadCodeAssist')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ cloudaicompanionProject: 'p' }));
+      }
+      const hasNeon = auth.includes('tok_yes');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          models: hasNeon
+            ? { 'gemini-4-neon-xhigh': { quotaInfo: { remainingFraction: 1 } } }
+            : { 'gemini-3.8-flash-tiered': { quotaInfo: { remainingFraction: 1 } } },
+        }),
+      );
+    });
+  });
+  const port = await listen(stub);
+  fs.writeFileSync(egress, JSON.stringify({ enabled: false, relay: `http://127.0.0.1:${port}` }));
+  fs.writeFileSync(creds, JSON.stringify({ access_token: 'tok_no', refresh_token: 'r', expiry_date: Date.now() + 3600e3 }));
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: [
+        { id: 'acc_no', email: 'no@example.com', access_token: 'tok_no', refresh_token: 'r', expiry_date: Date.now() + 3600e3 },
+        { id: 'acc_yes', email: 'yes@example.com', access_token: 'tok_yes', refresh_token: 'r', expiry_date: Date.now() + 3600e3 },
+      ],
+      pinned: 'acc_no',
+    }),
+  );
+  const script = `
+    process.env.AG_ACCOUNTS_FILE = ${JSON.stringify(file)};
+    process.env.AG_CREDS_FILE = ${JSON.stringify(creds)};
+    process.env.AG_EGRESS_FILE = ${JSON.stringify(egress)};
+    const mod = await import(${JSON.stringify(pathToFileURL(path.join(root, 'accounts.js')).href)});
+    const s = mod.loadStore();
+    for (const acc of s.accounts) await mod.accountModels(acc, { force: true });
+    const order = mod.orderedAccounts('gemini-4-neon-xhigh').map((acc) => acc.id);
+    console.log(JSON.stringify(order));
+  `;
+  try {
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+    const order = JSON.parse(stdout.trim().split('\n').pop());
+    assert.deepEqual(order, ['acc_yes']);
+  } finally {
+    stub.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

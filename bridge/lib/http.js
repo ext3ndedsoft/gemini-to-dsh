@@ -47,7 +47,16 @@ export function sendJson(res, status, payload) {
   res.end(body);
 }
 
+function errorTypeFor(status, code) {
+  if (code === 'content_blocked' || code === 'content_refused') return 'content_filter';
+  if (status === 429) return 'rate_limit_error';
+  if (status === 401 || status === 403) return 'authentication_error';
+  if (status >= 500) return 'server_error';
+  return 'invalid_request_error';
+}
+
 export function openAiError(res, status, message, code = 'upstream_error') {
+  const type = errorTypeFor(status, code);
   if (res.headersSent) {
     // The status line is already gone, so the only honest remainder is an event
     // on the wire. Ending silently leaves the client holding a 200 with no
@@ -57,7 +66,7 @@ export function openAiError(res, status, message, code = 'upstream_error') {
       try {
         res.write(
           'data: ' +
-            JSON.stringify({ error: { message, type: 'upstream_error', code } }) +
+            JSON.stringify({ error: { message, type, code } }) +
             '\n\n'
         );
         res.write('data: [DONE]\n\n');
@@ -68,7 +77,7 @@ export function openAiError(res, status, message, code = 'upstream_error') {
     res.end();
     return;
   }
-  sendJson(res, status, { error: { message, type: 'invalid_request_error', code } });
+  sendJson(res, status, { error: { message, type, code } });
 }
 
 export function sseHead(res) {
@@ -155,9 +164,11 @@ export async function upstreamErrorText(res) {
   }
 }
 
-/** 429 stays 429 (clients back off), 5xx becomes 502, everything else is a 400. */
+/** 429/401/403/404/413/503/504 keep their semantics; other 5xx become 502, other 4xx become 400. */
 export function errorStatus(status) {
-  return status === 429 ? 429 : status >= 500 ? 502 : 400;
+  if (status === 429 || status === 401 || status === 403 || status === 404 || status === 413) return status;
+  if (status === 503 || status === 504) return status;
+  return status >= 500 ? 502 : 400;
 }
 
 export function usagePayload(usage) {

@@ -4,10 +4,11 @@ Web search for DSH. Registers into the same `ctx.web` seam as the bundled provid
 the `web_search` tool, its result cap and its error envelope stay untouched.
 
 ## Provider order
-1. Keyed API, in order: `serper`, `tavily`, `brave`, `google-cse`, `exa` (an `order`
+1. `antigravity` (when configured in `search.json` or via `AG_BRIDGE_URL` / `AG_BRIDGE_SECRET`) — calls the local bridge's `POST /v1/search` endpoint using Cloud Code Google Search grounding (`googleSearch`), returning both a grounded summary (`content`) and resolved source URLs.
+2. Keyed API, in order: `serper`, `tavily`, `brave`, `google-cse`, `exa` (an `order`
    array in the config file replaces this list entirely).
-2. DuckDuckGo HTML, racing its lite page when the first one is slow.
-3. `scraperapi`'s Google endpoint — last, because it costs a credit per search.
+3. DuckDuckGo HTML, racing its lite page when the first one is slow.
+4. `scraperapi`'s Google endpoint — last, because it costs a credit per search.
 
 ScraperAPI has a second role: when a `scraperapi` key is present it is also the
 transport DuckDuckGo goes through, which sidesteps the throttle instead of pacing it.
@@ -22,7 +23,11 @@ is more than 1.5 s away, the provider answers from free sources instead of waiti
 `$DSH_SEARCH_CONFIG`, else `~/.dsh/search.json`:
 
     {
-      "providers": { "brave": { "key": "..." } },
+      "order": ["antigravity", "brave"],
+      "providers": {
+        "antigravity": { "baseUrl": "http://127.0.0.1:8787", "key": "local-bridge" },
+        "brave": { "key": "..." }
+      },
       "transport": { "proxy": "http://127.0.0.1:40000" }
     }
 

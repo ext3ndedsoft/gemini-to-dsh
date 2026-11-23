@@ -10,10 +10,10 @@
  * and the closing tag is never emitted as either channel.
  */
 
-const OPEN_PREFIXES = ['<thinking'];
-const OPEN_TAG = /^\s*<thinking(\s[^>]*)?>/i;
-const CLOSE_TAG = /<\/thinking\s*>/i;
-const CLOSE_LOOKAHEAD = '</thinking>'.length - 1;
+const OPEN_PREFIXES = ['<thinking', '<antml:thinking'];
+const OPEN_TAG = /^\s*<(antml:)?thinking(\s[^>]*)?>/i;
+const CLOSE_TAG = /<\/(antml:)?thinking\s*>/i;
+const CLOSE_LOOKAHEAD = '</antml:thinking>'.length - 1;
 const LEADING_SPACE_CAP = 64;
 const THINK_CAP = 200_000;
 

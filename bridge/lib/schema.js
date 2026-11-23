@@ -128,8 +128,23 @@ export function toGeminiSchema(schema) {
  * and the bare `{name, description, parameters}` that DSH's own request headers
  * carry. Returns null when there is nothing to declare.
  */
+const toolCache = new Map();
+const TOOL_CACHE_MAX = 16;
+
 export function toolDeclarations(tools) {
   if (!Array.isArray(tools) || !tools.length) return null;
+  let cacheKey = null;
+  try {
+    cacheKey = JSON.stringify(tools);
+    const hit = toolCache.get(cacheKey);
+    if (hit) {
+      toolCache.delete(cacheKey);
+      toolCache.set(cacheKey, hit);
+      return hit;
+    }
+  } catch {
+    cacheKey = null;
+  }
   const declarations = [];
   const skipped = [];
 
@@ -152,7 +167,28 @@ export function toolDeclarations(tools) {
   if (skipped.length) {
     log(`skipped ${skipped.length} tool declaration(s) without a name: ${skipped.slice(0, 5).join(', ')}`);
   }
-  return declarations.length ? [{ functionDeclarations: declarations }] : null;
+  const result = declarations.length ? [{ functionDeclarations: declarations }] : null;
+  if (cacheKey && result) {
+    toolCache.set(cacheKey, result);
+    while (toolCache.size > TOOL_CACHE_MAX) toolCache.delete(toolCache.keys().next().value);
+  }
+  return result;
+}
+
+/**
+ * DSH refuses a half-filled escalation instead of ignoring the stray half
+ * ("invalid escalation: justification is only valid together with sandbox_permissions"),
+ * and the model fills one of those two fields on its own often enough to kill a whole
+ * turn. Drop the orphan; a call that carried both is passed through untouched.
+ */
+export function sanitizeToolArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  const hasPermissions = args.sandbox_permissions !== undefined;
+  const hasJustification = args.justification !== undefined;
+  if (hasPermissions === hasJustification) return args;
+  const { justification, sandbox_permissions, ...rest } = args;
+  log(`dropped orphan ${hasPermissions ? 'sandbox_permissions' : 'justification'} on a tool call`);
+  return rest;
 }
 
 /**
@@ -178,23 +214,33 @@ export function functionCallingConfig(toolChoice) {
  * eats the window leaves the model with nothing to answer with. Always leave room
  * for the reply, and let a caller force thinking off on a retry.
  */
-export function thinkingConfig(effort, maxTokens, mode) {
+export function thinkingConfig(effort, maxTokens, mode, model = '') {
   if (mode === 'off') return { thinkingBudget: 0, includeThoughts: false };
-  if (mode === 'minimal') return { thinkingBudget: THINKING_BUDGETS.minimal, includeThoughts: false };
+  // Keep includeThoughts: true on minimal retries: models like gemini-4-hydrogen-sonar
+  // can still spend thousands of thinking tokens even at budget 128, and hiding
+  // those chunks leaves the SSE stream completely silent until the client times out.
+  if (mode === 'minimal') return { thinkingBudget: THINKING_BUDGETS.minimal, includeThoughts: true };
 
+  const isClaude = /^claude-/i.test(String(model || ''));
   const cap = typeof maxTokens === 'number' ? maxTokens : 32768;
   // A window this small only ever comes from a liveness probe: any thought at all
   // would eat it whole and the call would come back empty.
-  if (cap <= 128) return { thinkingBudget: 0, includeThoughts: true };
+  if (cap <= 128) return { thinkingBudget: 0, includeThoughts: !isClaude };
   // Thinking and the answer share one window. On a small window leave the model at
   // least half of it to answer with instead of turning the thought off outright —
   // a silently thought-less turn reads as a dumber model, not as a smaller request.
-  const room = cap > 1024 ? cap - 1024 : Math.max(128, Math.floor(cap / 2));
+  const room = cap > 16384 ? cap - 8192 : cap > 1024 ? cap - 1024 : Math.max(128, Math.floor(cap / 2));
   // An explicit effort from the client wins; otherwise the operator can lower the
   // default for cost without touching the client. Thinking is billed as output, and
   // on a big context it is most of the bill.
-  const key = String(effort || process.env.AG_THINKING_DEFAULT || '').toLowerCase();
-  const budget = Math.min(THINKING_BUDGETS[key] || THINKING_BUDGETS.medium, room);
-  if (budget < THINKING_BUDGETS.minimal) return { includeThoughts: true };
+  const rawKey = String(effort || process.env.AG_THINKING_DEFAULT || '').toLowerCase();
+  if (rawKey === 'off' || rawKey === 'none') return { thinkingBudget: 0, includeThoughts: false };
+  const key = rawKey === 'extra' || rawKey === 'max' ? 'xhigh' : rawKey;
+  // Gemini 3/4 models reject THINKING_LEVEL_XHIGH when budget exceeds high (24576).
+  const requested = key === 'xhigh' && !isClaude ? THINKING_BUDGETS.high : THINKING_BUDGETS[key] || THINKING_BUDGETS.high;
+  const budget = Math.min(requested, room);
+  // Anthropic-style models reject a thinking budget under 1024 outright instead of
+  // clamping it, which turns a short reply into a 400.
+  if (isClaude && budget < 1024) return { thinkingBudget: 0, includeThoughts: false };
   return { thinkingBudget: budget, includeThoughts: true };
 }

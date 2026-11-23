@@ -93,12 +93,12 @@ export function toContents(messages) {
         const part = { functionCall: { name: call.function.name, args } };
         // The signature travels with the call, not with its id: a client that
         // re-minted the id still gets its own signature back by name and arguments.
-        // Without any signature the current turn is refused outright, so the
-        // documented placeholder goes in rather than silence.
-        const signature =
-          signatureForCall(call.id, call.function.name, args) ||
-          (messageIndex > lastUserIndex ? PLACEHOLDER_SIGNATURE : undefined);
-        if (signature) part.thoughtSignature = signature;
+        // Gemini validates thought signatures across the whole conversation history
+        // (not only after the last user message), so any call whose signature was
+        // evicted or lost across restarts falls back to the documented placeholder
+        // instead of permanently poisoning the session with a 400.
+        const signature = signatureForCall(call.id, call.function.name, args) || PLACEHOLDER_SIGNATURE;
+        part.thoughtSignature = signature;
         parts.push(part);
       }
       if (parts.length) contents.push({ role: 'model', parts });

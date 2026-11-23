@@ -29,6 +29,10 @@ from. It is the same thing as the segmented control, sized for a thumb.
 **Accounts.** Which is pinned (served first), which is a session, which is dead and why. `pin`
 reorders the pool; `add account` starts the OAuth flow in a new tab.
 
+**Web-search model.** Pick the default Gemini model used by `POST /v1/search` (`auto` uses the
+account catalog's `webSearchModelIds`, or choose `3.5-flash-lite`, `2.5-flash-lite`,
+`3.1-flash-lite`, `2.5-flash`, `3-flash`, `3.8-flash-tiered`).
+
 ## Motion
 
 The panel steps in rather than blinking in: a short rise on open, a shorter fall on close, the

@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
 		const toneOf = (pct) => (pct > 50 ? "var(--good)" : pct > 20 ? "var(--warn)" : "var(--bad)");
 		const clamp = (value) => Math.max(0, Math.min(100, value));
 
-		const KEEP_MODEL = (id) => /^claude-/.test(id) || /^gemini-3\.8-flash/.test(id);
+		const KEEP_MODEL = (id) => /^claude-/.test(id) || /^gemini-(?:3\.8|4)/.test(id);
 
 		function resetIn(iso) {
 			if (!iso) return "";
@@ -278,18 +278,30 @@ window.__ModuleLoader__.load({
 			const [data, setData] = React.useState(null);
 			const [error, setError] = React.useState(null);
 			const [loading, setLoading] = React.useState(false);
+			const seqRef = React.useRef(0);
+			const abortRef = React.useRef(null);
 
 			const load = React.useCallback(async (force) => {
+				const seq = ++seqRef.current;
+				try {
+					abortRef.current?.abort();
+				} catch {}
+				const controller = new AbortController();
+				abortRef.current = controller;
 				setLoading(true);
 				try {
-					const res = await getJson(BRIDGE + "/limits" + (force ? "?force=1" : ""));
+					const res = await getJson(BRIDGE + "/limits" + (force ? "?force=1" : ""), {
+						signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)])
+					});
+					if (seq !== seqRef.current) return;
 					if (!res.ok) throw new Error("bridge " + res.status);
 					setData(res.json);
 					setError(null);
 				} catch (err) {
+					if (seq !== seqRef.current || (err && err.name === "AbortError")) return;
 					setError(String((err && err.message) || err));
 				} finally {
-					setLoading(false);
+					if (seq === seqRef.current) setLoading(false);
 				}
 			}, []);
 
@@ -302,6 +314,9 @@ window.__ModuleLoader__.load({
 				return () => {
 					alive = false;
 					clearInterval(timer);
+					try {
+						abortRef.current?.abort();
+					} catch {}
 				};
 			}, [load, open]);
 
@@ -339,10 +354,15 @@ window.__ModuleLoader__.load({
 							/* a frame cut in half heals on the next one */
 						}
 					};
+					source.onerror = () => {
+						setOnline(false);
+					};
 				} catch {
 					/* no EventSource: the slow poll below still keeps the panel honest */
 				}
-				const timer = setInterval(load, 60000);
+				const timer = setInterval(() => {
+					if (typeof document === "undefined" || document.visibilityState !== "hidden") load();
+				}, 60000);
 				return () => {
 					clearInterval(timer);
 					try {
@@ -854,6 +874,10 @@ window.__ModuleLoader__.load({
 			// into the question, and the question defuses itself after a few seconds.
 			const [confirming, setConfirming] = React.useState(false);
 			const [removing, setRemoving] = React.useState(false);
+			const confirmTimerRef = React.useRef(null);
+			React.useEffect(() => () => {
+				if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+			}, []);
 			const askRemove = () => {
 				if (account.native) {
 					if (typeof onNote === "function") onNote("аккаунт сессии удалить нельзя — это твой вход");
@@ -861,9 +885,11 @@ window.__ModuleLoader__.load({
 				}
 				if (!confirming) {
 					setConfirming(true);
-					setTimeout(() => setConfirming(false), 4000);
+					if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+					confirmTimerRef.current = setTimeout(() => setConfirming(false), 4000);
 					return;
 				}
+				if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
 				setRemoving(true);
 				setConfirming(false);
 				onRemove(account.id);
@@ -1050,24 +1076,19 @@ window.__ModuleLoader__.load({
 				setBusy(true);
 				setNote("asking the model…");
 				try {
-					// The loopback /api/v1 path is not token-guarded, so the panel can test the
-					// route without shipping the bridge secret into a browser bundle.
-					const res = await getJson(BRIDGE + "/api/v1/chat/completions", {
+					const res = await getJson(BRIDGE + "/accounts/test-route", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({
-							model: "gemini-3.8-flash",
-							messages: [{ role: "user", content: "ping" }],
-							// Eight tokens leave no room for thinking; the tiny-window guard in
-							// thinkingConfig turns thinking off, but 64 keeps a full word safe.
-							max_tokens: 64,
-							stream: false
-						}),
-						signal: AbortSignal.timeout(120000)
+						body: JSON.stringify({ model: "gemini-3.8-flash" }),
+						signal: AbortSignal.timeout(50000)
 					});
-					if (res.ok) setNote("route works — the model answered");
-					else if (/location is not supported/i.test(JSON.stringify(res.json || {}))) setNote("geoblocked from this egress");
-					else setNote(((res.json || {}).error || {}).message || "HTTP " + res.status);
+					if (res.ok && res.json && res.json.ok) {
+						setNote("route works — " + (res.json.ms / 1000).toFixed(1) + " с");
+					} else {
+						const msg = (res.json && (res.json.error?.message || res.json.error)) || "HTTP " + res.status;
+						if (/location is not supported/i.test(String(msg))) setNote("geoblocked from this egress");
+						else setNote(explainError(msg) || String(msg));
+					}
 				} catch {
 					setNote("мост не отвечает");
 				}
@@ -1082,7 +1103,8 @@ window.__ModuleLoader__.load({
 					const res = await fetch(BRIDGE + "/accounts/switch", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ id })
+						body: JSON.stringify({ id }),
+						signal: AbortSignal.timeout(15000)
 					});
 					const json = await res.json().catch(() => ({}));
 					if (json && json.ok) setNote("переключено: " + (json.order && json.order[0] ? json.order[0] : id));
@@ -1098,11 +1120,12 @@ window.__ModuleLoader__.load({
 					const res = await fetch(BRIDGE + "/accounts/remove", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ id })
+						body: JSON.stringify({ id }),
+						signal: AbortSignal.timeout(15000)
 					});
 					const json = await res.json().catch(() => ({}));
 					if (res.ok) setNote("аккаунт удалён");
-					else setNote(explainError(json.error && json.error.message ? json.error.message : "не удалось удалить") );
+					else setNote(explainError(json.error && json.error.message ? json.error.message : "не удалось удалить"));
 				} catch {
 					setNote("мост не отвечает");
 				}
@@ -1120,7 +1143,8 @@ window.__ModuleLoader__.load({
 					const res = await fetch(BRIDGE + "/accounts/rotation", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify(patch)
+						body: JSON.stringify(patch),
+						signal: AbortSignal.timeout(15000)
 					});
 					const json = await res.json().catch(() => ({}));
 					if (json && json.ok) setNote(json.rotation.enabled ? "сторож включён" : "сторож выключен");
@@ -1142,6 +1166,42 @@ window.__ModuleLoader__.load({
 				saveRotation({ threshold: pct / 100 });
 			};
 
+			const searchCfg = (data && data.search) || {
+				model: null,
+				defaultModel: "gemini-3.5-flash-lite",
+				effectiveModel: "gemini-3.5-flash-lite",
+				models: [
+					"gemini-3.5-flash-lite",
+					"gemini-2.5-flash-lite",
+					"gemini-3.1-flash-lite",
+					"gemini-2.5-flash",
+					"gemini-3-flash",
+					"gemini-3.8-flash-tiered"
+				]
+			};
+			const [searchBusy, setSearchBusy] = React.useState(false);
+			const saveSearchModel = async (model) => {
+				setSearchBusy(true);
+				try {
+					const res = await fetch(BRIDGE + "/search/model", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ model: model === "auto" ? null : model }),
+						signal: AbortSignal.timeout(15000)
+					});
+					const json = await res.json().catch(() => ({}));
+					if (res.ok && json && json.ok) {
+						setNote("web-search: " + (json.model || "auto (" + json.effectiveModel + ")"));
+					} else {
+						setNote("мост не принял модель поиска");
+					}
+				} catch {
+					setNote("мост не отвечает");
+				}
+				setSearchBusy(false);
+				load(true);
+			};
+
 			const [checking, setChecking] = React.useState(null);
 			const checkAccount = async (id) => {
 				setChecking(id);
@@ -1149,7 +1209,8 @@ window.__ModuleLoader__.load({
 					const res = await fetch(BRIDGE + "/accounts/check", {
 						method: "POST",
 						headers: { "content-type": "application/json" },
-						body: JSON.stringify({ id })
+						body: JSON.stringify({ id }),
+						signal: AbortSignal.timeout(35000)
 					});
 					const json = await res.json().catch(() => ({}));
 					if (json && json.ok) setNote("замер: " + (json.ms / 1000).toFixed(1) + " с");
@@ -1163,7 +1224,12 @@ window.__ModuleLoader__.load({
 
 			const addAccount = async () => {
 				try {
-					const res = await getJson(BRIDGE + "/accounts/login", { method: "POST" });
+					const res = await getJson(BRIDGE + "/accounts/login", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: "{}",
+						signal: AbortSignal.timeout(15000)
+					});
 					if (res.json && res.json.url) window.open(res.json.url, "_blank", "noopener");
 				} catch {}
 			};
@@ -1268,6 +1334,46 @@ h(Transport, {
 											title: rotation.enabled ? "выключить сторожа" : "включить сторожа"
 										},
 										h("i")
+									)
+								),
+								h(
+									"div",
+									{ className: "sub" },
+									h("div", { className: "subhead" }, "web-search модель"),
+									h(
+										"div",
+										{ className: "chips", style: { marginBottom: 0 } },
+										h(
+											"button",
+											{
+												key: "auto",
+												className: "chip-btn" + (!searchCfg.model ? " on" : ""),
+												disabled: searchBusy,
+												onClick: () => saveSearchModel("auto"),
+												title: "автовыбор из каталога (" + (searchCfg.defaultModel || "gemini-3.5-flash-lite") + ")"
+											},
+											"auto"
+										),
+										(searchCfg.models || []).map((id) =>
+											h(
+												"button",
+												{
+													key: id,
+													className: "chip-btn" + (searchCfg.model === id ? " on" : ""),
+													disabled: searchBusy,
+													onClick: () => saveSearchModel(id),
+													title: id
+												},
+												id.replace(/^gemini-/, "")
+											)
+										)
+									),
+									h(
+										"div",
+										{ className: "hint" },
+										"сейчас: " +
+											(searchCfg.effectiveModel || searchCfg.defaultModel || "gemini-3.5-flash-lite") +
+											(searchCfg.model ? " · выбрана вручную" : " · авто из каталога")
 									)
 								),
 								h("div", { className: "sect" }, "accounts"),

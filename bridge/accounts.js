@@ -15,13 +15,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { UPSTREAM_TIMEOUT_MS } from './lib/config.js';
-import { fetchQuotaSummary } from './lib/quota.js';
+import { CLIENT_VERSION, DEFAULT_SEARCH_MODEL, SEARCH_MODELS, UPSTREAM_TIMEOUT_MS } from './lib/config.js';
+import { fetchQuotaSummary, hubUserAgent } from './lib/quota.js';
 import { readConfig } from './egress.js';
 
 export const API = 'https://daily-cloudcode-pa.googleapis.com';
-export const USER_AGENT = 'antigravity/1.11.5 windows/amd64';
+export const USER_AGENT = hubUserAgent();
 export const DEFAULT_PROJECT = 'aicode-consumers';
+
+function clientPlatform() {
+  if (process.platform === 'win32') return 'WINDOWS_AMD64';
+  if (process.platform === 'darwin') return process.arch === 'arm64' ? 'DARWIN_ARM64' : 'DARWIN_AMD64';
+  if (process.platform === 'linux') return process.arch === 'arm64' ? 'LINUX_ARM64' : 'LINUX_AMD64';
+  return 'PLATFORM_UNSPECIFIED';
+}
 
 // OAuth client used to refresh the stored tokens. It is not a project credential:
 // the same public installed-app client ships inside Google's own Gemini CLI, so it
@@ -102,6 +109,10 @@ const refreshing = new Map();
 const removedIds = new Set();
 /** Accounts whose cooldowns this process cleared: disk's stale copy must not return. */
 const clearedIds = new Set();
+/** True once this process explicitly changed `pinned` (including clearing it to null). */
+let pinDirty = false;
+/** True once this process explicitly changed `searchModel` (including clearing it to null). */
+let searchModelDirty = false;
 let writeSeq = 0;
 /** @type {Map<string, {verifier:string, at:number}>} */
 const pendingLogins = new Map();
@@ -112,8 +123,16 @@ function log(...args) {
 
 // ------------------------------------------------------------------- storage
 
+function pruneExpiredCooldowns(now = Date.now()) {
+  for (const [key, until] of cooldowns) {
+    if (typeof until !== 'number' || until <= now) cooldowns.delete(key);
+  }
+}
+
 function saveStore() {
   fs.mkdirSync(path.dirname(STORE_FILE), { recursive: true });
+  const now = Date.now();
+  pruneExpiredCooldowns(now);
   // Wall clocks ride along: "spent until the 12th" must not turn back into
   // "healthy" just because the bridge restarted, or every restart re-learns the
   // same dead account with another 429.
@@ -138,13 +157,16 @@ function saveStore() {
     }
     const diskCooldowns = onDisk.cooldowns && typeof onDisk.cooldowns === 'object' ? onDisk.cooldowns : {};
     for (const [key, until] of Object.entries(diskCooldowns)) {
+      if (typeof until !== 'number' || until <= now) continue;
       if (key in payload.cooldowns) continue;
       if (clearedIds.has(key.split('|')[0])) continue;
       payload.cooldowns[key] = until;
     }
-    if (payload.pinned == null && onDisk.pinned) payload.pinned = onDisk.pinned;
+    if (!pinDirty && payload.pinned == null && onDisk.pinned) payload.pinned = onDisk.pinned;
+    if (!searchModelDirty && payload.searchModel === undefined && typeof onDisk.searchModel === 'string' && onDisk.searchModel.trim()) {
+      payload.searchModel = onDisk.searchModel.trim();
+    }
     payload.rotation = { ...(onDisk.rotation || {}), ...(store.rotation || {}) };
-    if (payload.enabled === undefined) payload.enabled = onDisk.enabled;
   }
   // One temporary name per write: two processes sharing a single `.tmp` used to
   // publish each other's half-written file, and the losing rename threw ENOENT.
@@ -258,6 +280,9 @@ export function loadStore() {
     // Kept on the record so the five-hour guard survives a restart; dropping it
     // here silently reset the setting on every boot.
     ...(parsed && parsed.rotation ? { rotation: parsed.rotation } : {}),
+    ...(parsed && typeof parsed.searchModel === 'string' && parsed.searchModel.trim()
+      ? { searchModel: parsed.searchModel.trim() }
+      : {}),
   };
   const now = Date.now();
   for (const [key, at] of Object.entries((parsed && parsed.cooldowns) || {})) {
@@ -285,7 +310,7 @@ async function refreshAccount(acc) {
   });
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': USER_AGENT },
     body,
   });
   const json = await res.json().catch(() => ({}));
@@ -388,11 +413,17 @@ export async function cloudPost(acc, pathname, body, { signal, retries = 2, time
     } catch (err) {
       if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) throw err;
       lastError = err;
+      const reason = networkReason(err);
       // A cancelled turn must not be retried, and neither must a logic error.
-      if ((signal && signal.aborted) || !RETRYABLE.test(networkReason(err))) throw err;
+      if ((signal && signal.aborted) || !RETRYABLE.test(reason)) throw err;
       if (attempt === retries) break;
-      log(`cloudPost ${pathname} ${networkReason(err)} вЂ” retry ${attempt + 1}/${retries}`);
-      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+      log(`cloudPost ${pathname} ${reason} — retry ${attempt + 1}/${retries}`);
+      // A stale pooled keep-alive socket (UND_ERR_SOCKET / ECONNRESET) fails immediately
+      // on reuse; retrying right away on a fresh socket avoids a 300ms stall.
+      const staleSocket = attempt === 0 && /UND_ERR_SOCKET|other side closed|ECONNRESET|socket hang up/i.test(reason);
+      if (!staleSocket) {
+        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+      }
     }
   }
   throw lastError;
@@ -403,7 +434,13 @@ export async function accountMeta(acc, { force = false } = {}) {
   if (!force && acc.project && acc.tier && Date.now() - (acc.metaAt || 0) < META_TTL) return acc;
   try {
     const res = await cloudPost(acc, '/v1internal:loadCodeAssist', {
-      metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' },
+      metadata: {
+        ideType: 'ANTIGRAVITY',
+        ideVersion: CLIENT_VERSION,
+        platform: clientPlatform(),
+        pluginType: 'GEMINI',
+        ideName: 'antigravity',
+      },
     });
     if (res.ok) {
       const json = await res.json();
@@ -430,7 +467,11 @@ export async function accountModels(acc, { force = false } = {}) {
     throw Object.assign(new Error(`fetchAvailableModels ${res.status} for ${acc.id}`), { status: res.status });
   }
   const json = await res.json();
-  const entry = { at: Date.now(), models: json.models || {} };
+  const entry = {
+    at: Date.now(),
+    models: json.models || {},
+    webSearchModelIds: Array.isArray(json.webSearchModelIds) ? json.webSearchModelIds.filter((id) => typeof id === 'string' && id.trim()) : [],
+  };
   modelsCache.set(acc.id, entry);
   return entry;
 }
@@ -460,8 +501,8 @@ export async function accountQuota(acc, { force = false } = {}) {
 export function markCooling(acc, model, untilMs) {
   const until = Math.max(untilMs || Date.now() + 120_000, Date.now() + 15_000);
   cooldowns.set(`${acc.id}|${model}`, until);
-  // A long wall is worth a write to the store: it has to survive a restart, or a
-  // client goes back to calling a spent account healthy. A per-minute throttle is
+  // A long wall is worth a write to the store: it has to survive a restart, or the
+  // panel goes back to calling a spent account healthy. A per-minute throttle is
   // not — persisting that would turn a retry loop into a disk loop.
   if (until - Date.now() > 30 * 60_000) saveStore();
 }
@@ -488,6 +529,11 @@ function fiveHourFraction(acc) {
 
 function cooldownFor(acc, model) {
   return Math.max(cooldowns.get(`${acc.id}|${model}`) || 0, cooldowns.get(`${acc.id}|*`) || 0);
+}
+
+export function isCooling(acc, model) {
+  if (!acc) return false;
+  return cooldownFor(acc, model) > Date.now();
 }
 
 /**
@@ -517,8 +563,26 @@ function freshLatency(id, now) {
 export function orderedAccounts(model) {
   const current = loadStore();
   const now = Date.now();
-  const scored = current.accounts
-    .filter((acc) => acc.enabled !== false)
+  const enabled = current.accounts.filter((acc) => acc.enabled !== false);
+  // Some models (e.g. Gemini 4 Neon/Argon, Claude 5.5) are only entitled on a
+  // subset of accounts. When at least one account's cached catalog confirms it
+  // holds the model, skip accounts whose cached catalog explicitly lacks it so
+  // requests never fail with a misleading 404 or rotate onto an unentitled pin.
+  const hasKnownSupport =
+    model &&
+    model !== '*' &&
+    enabled.some((acc) => {
+      const quota = modelsCache.get(acc.id);
+      return Boolean(quota && quota.models && quota.models[model] && quota.models[model].quotaInfo);
+    });
+  const pool = hasKnownSupport
+    ? enabled.filter((acc) => {
+        const quota = modelsCache.get(acc.id);
+        if (!quota || !quota.models) return true;
+        return Boolean(quota.models[model] && quota.models[model].quotaInfo);
+      })
+    : enabled;
+  const scored = pool
     .map((acc) => {
       const until = cooldownFor(acc, model);
       const quota = modelsCache.get(acc.id);
@@ -576,7 +640,7 @@ export function latencyOf(id) {
 
 /**
  * Drop every cooldown this account collected. A switch that leaves the old
- * "wait five minutes" note behind is a switch the next request ignores.
+ * "wait 5 minutes" note behind is a switch the next request ignores.
  */
 export function clearCooldowns(id) {
   for (const key of [...cooldowns.keys()]) {
@@ -669,17 +733,25 @@ async function quotaSummary(acc, { force = false } = {}) {
 
 /**
  * Fill the five-hour cache without the panel: ordering by the 5h window is only
- * as fresh as the last /limits call, so a bridge nobody is watching would fall
- * back to "unknown" and never honour the 5% rule.
+ * as fresh as the last /limits call, so a bridge nobody is looking at would pin
+ * everything to its "unknown" fallback and never honour the 5% rule.
  */
 export async function warmQuotaSummaries() {
   const current = loadStore();
-  for (const account of current.accounts) {
-    if (account.enabled === false) continue;
-    const cached = quotaSummaryCache.get(account.id);
-    if (cached && Date.now() - cached.at < QUOTA_SUMMARY_TTL) continue;
-    await quotaSummary(account).catch(() => null);
-  }
+  await Promise.allSettled(
+    current.accounts
+      .filter((account) => account.enabled !== false)
+      .map(async (account) => {
+        const cachedModels = modelsCache.get(account.id);
+        if (!cachedModels || Date.now() - cachedModels.at >= MODELS_TTL) {
+          await accountModels(account).catch(() => null);
+        }
+        const cached = quotaSummaryCache.get(account.id);
+        if (!cached || Date.now() - cached.at >= QUOTA_SUMMARY_TTL) {
+          await quotaSummary(account).catch(() => null);
+        }
+      }),
+  );
 }
 
 export async function limitsReport({ force = false } = {}) {
@@ -722,6 +794,7 @@ export async function limitsReport({ force = false } = {}) {
     accounts,
     pinned: current.pinned,
     rotation: rotationOf(current),
+    search: searchConfigReport(current),
     cooldowns: cooldownSnapshot(),
     updatedAt: Date.now(),
   };
@@ -780,8 +853,73 @@ export function setPinned(id) {
   const current = loadStore();
   if (id && !current.accounts.some((acc) => acc.id === id)) return false;
   current.pinned = id || null;
+  pinDirty = true;
   saveStore();
   return true;
+}
+
+export function searchModelOf(current = loadStore()) {
+  const raw = current && typeof current.searchModel === 'string' ? current.searchModel.trim() : '';
+  return raw && raw.toLowerCase() !== 'auto' ? raw : null;
+}
+
+export function setSearchModel(model) {
+  const current = loadStore();
+  const next = typeof model === 'string' ? model.trim() : '';
+  if (!next || next.toLowerCase() === 'auto') {
+    delete current.searchModel;
+  } else {
+    current.searchModel = next;
+  }
+  searchModelDirty = true;
+  saveStore();
+  log(`search: default model -> ${current.searchModel || 'auto'}`);
+  return searchConfigReport(current);
+}
+
+export function recommendedSearchModel() {
+  const current = loadStore();
+  for (const acc of current.accounts) {
+    if (acc.enabled === false) continue;
+    const cached = modelsCache.get(acc.id);
+    if (cached && Array.isArray(cached.webSearchModelIds) && cached.webSearchModelIds.length) {
+      return cached.webSearchModelIds[0];
+    }
+  }
+  return process.env.AG_SEARCH_MODEL || DEFAULT_SEARCH_MODEL;
+}
+
+export function availableSearchModels() {
+  const current = loadStore();
+  const seen = new Set();
+  const out = [];
+  const add = (id) => {
+    if (typeof id !== 'string') return;
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+  for (const acc of current.accounts) {
+    if (acc.enabled === false) continue;
+    const cached = modelsCache.get(acc.id);
+    for (const id of cached?.webSearchModelIds || []) add(id);
+  }
+  for (const id of SEARCH_MODELS) add(id);
+  const selected = searchModelOf(current);
+  if (selected) add(selected);
+  return out;
+}
+
+export function searchConfigReport(current = loadStore()) {
+  const model = searchModelOf(current);
+  const defaultModel = recommendedSearchModel();
+  return {
+    model,
+    defaultModel,
+    effectiveModel: model || defaultModel,
+    models: availableSearchModels(),
+  };
 }
 
 export function setEnabled(id, enabled) {
@@ -834,7 +972,7 @@ export async function completeLogin(code, state) {
   });
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': USER_AGENT },
     body,
   });
   const json = await res.json().catch(() => ({}));

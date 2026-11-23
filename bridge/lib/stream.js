@@ -12,15 +12,25 @@
  */
 
 import { DEFAULT_MODEL, log } from './config.js';
+import { scheduleKeepAlive } from './cache-keepalive.js';
 import { chunkId, errorStatus, openAiError, sseHead, upstreamErrorText, usagePayload } from './http.js';
 import { Pacer } from './pacer.js';
+import { sanitizeToolArgs } from './schema.js';
 import { newCallId, rememberCall, flushSignatures } from './signatures.js';
 import { ThinkingStream } from './thinking.js';
 import { recordLatency } from '../accounts.js';
-import { parseSseJson, readSse, upstream } from './upstream.js';
+import { idleBudget, parseSseJson, readSse, upstream } from './upstream.js';
 
 export const MAX_ATTEMPTS = 3;
 const EMPTY_NUDGE = 'Your previous reply was empty. Call a tool now, or answer the user in text.';
+/** Reasoning held back at the start of a turn, see emitReasoning(). Default 0 so thoughts stream immediately. */
+const rawReasoningHold = Number(process.env.AG_REASONING_HOLD ?? 0);
+const REASONING_HOLD = Number.isFinite(rawReasoningHold) && rawReasoningHold >= 0 ? rawReasoningHold : 0;
+/** Max time to hold initial reasoning before flushing so slow turns stay visible and keep the client watchdog alive. */
+const REASONING_HOLD_MS = Number(process.env.AG_REASONING_HOLD_MS || 10_000);
+/** Keep total silent wait inside one HTTP request below DSH's 300 s streamIdleTimeoutMs. */
+const CLIENT_WATCHDOG_MS = Number(process.env.AG_CLIENT_WATCHDOG_MS || 260_000);
+const KEEPALIVE_MS = 15_000;
 
 /**
  * A transport cut in the middle of an answer is continued instead of being thrown
@@ -69,22 +79,55 @@ export async function handleStream(req, res, body) {
   let finish = null;
   let usage = null;
   let wrote = false;
+  /** Answer-not-yet-known: clears the moment a real answer or tool call starts. */
+  let held = '';
+  let heldLive = false;
+  let heldTimer = null;
   /** Signature of the whole response: the model signs only its first call. */
   let groupSignature;
   /** Calls of this response that still have no signature, awaiting the group's. */
   let unsigned = [];
   /** The upstream body died mid-answer: the turn is incomplete, not finished. */
   let interrupted = false;
+  /** True while a cut answer is awaiting a clean continuation finish. */
+  let incomplete = false;
+  /** True when the bridge stopped retrying because the client watchdog budget ran low. */
+  let timedOut = false;
   /** Answer text seen so far: the tail of it is what a continuation may repeat. */
   let answer = '';
   /** A continuation is being de-duplicated: nothing goes out until the overlap is known. */
   let trimWindow = false;
   let pendingText = '';
   let resumes = 0;
+  let lastClientActivityAt = Date.now();
+  let lastWireWriteAt = Date.now();
+  let lastUpstreamRes = null;
+  let firstChunkMs = null;
+
+  const clearHeldTimer = () => {
+    if (heldTimer) {
+      clearTimeout(heldTimer);
+      heldTimer = null;
+    }
+  };
+
+  const keepaliveTimer = setInterval(() => {
+    if (!wrote || res.writableEnded || res.destroyed || controller.signal.aborted) return;
+    if (Date.now() - lastWireWriteAt < KEEPALIVE_MS) return;
+    try {
+      res.write(': keepalive\n\n');
+      lastWireWriteAt = Date.now();
+    } catch {
+      /* socket closed */
+    }
+  }, KEEPALIVE_MS);
+  keepaliveTimer.unref?.();
 
   const emit = (delta, finishReason = null) => {
     sseHead(res);
     wrote = true;
+    lastClientActivityAt = Date.now();
+    lastWireWriteAt = lastClientActivityAt;
     const chunk = {
       id,
       object: 'chat.completion.chunk',
@@ -107,11 +150,16 @@ export async function handleStream(req, res, body) {
     if (res.writableEnded || res.destroyed) return;
     emit({ content: text });
   });
-  // A vanished client must not leave a timer writing into a dead response.
-  res.on('close', () => pacer.stop());
+  // A vanished client must not leave timers writing into a dead response.
+  res.on('close', () => {
+    pacer.stop();
+    clearHeldTimer();
+    clearInterval(keepaliveTimer);
+  });
 
   const emitContent = (text) => {
     if (!text) return;
+    flushHeld();
     startRole();
     counters.content += text.length;
     answer = (answer + text).slice(-RESUME_ANCHOR * 2);
@@ -152,23 +200,52 @@ export async function handleStream(req, res, body) {
     if (pendingText.length >= RESUME_ANCHOR * 2) flushPending();
   };
 
-  /** Reasoning goes out the moment it arrives: holding it made a whole thinking phase invisible. */
-  const emitReasoning = (text) => {
-    if (!text) return;
+  const flushHeld = () => {
+    clearHeldTimer();
+    if (!held) return;
+    const text = held;
+    held = '';
     startRole();
     counters.reasoning += text.length;
     emit({ reasoning_content: text });
   };
 
+  const emitReasoning = (text) => {
+    if (!text) return;
+    if (heldLive) {
+      startRole();
+      counters.reasoning += text.length;
+      emit({ reasoning_content: text });
+      return;
+    }
+    held += text;
+    if (held.length >= REASONING_HOLD) {
+      heldLive = true;
+      flushHeld();
+      return;
+    }
+    if (!heldTimer && REASONING_HOLD_MS > 0) {
+      heldTimer = setTimeout(() => {
+        heldTimer = null;
+        if (controller.signal.aborted || !held) return;
+        heldLive = true;
+        flushHeld();
+      }, REASONING_HOLD_MS);
+      heldTimer.unref?.();
+    }
+  };
+
   const emitCall = (call) => {
+    if (trimWindow && pendingText) flushPending();
     const callId = call.functionCall.id || newCallId();
-    const args = call.functionCall.args || {};
+    const args = sanitizeToolArgs(call.functionCall.args || {});
     // Gemini signs only the first call of a parallel group. Since a client may
     // replay each call on its own, the group's signature is carried by all of
     // them: the same reasoning covers the whole response.
     const signature = call.thoughtSignature || groupSignature;
     rememberCall(callId, signature, call.functionCall.name, args);
     if (!signature) unsigned.push({ id: callId, name: call.functionCall.name, args });
+    flushHeld();
     startRole();
     callIndex += 1;
     counters.toolCalls += 1;
@@ -187,244 +264,304 @@ export async function handleStream(req, res, body) {
     });
   };
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-    const prepared = retryBody(body, attempt);
-    const suppressReasoning = Boolean(prepared.__suppressReasoning);
-    const splitter = new ThinkingStream();
-    groupSignature = undefined;
-    unsigned = [];
-
-    let upstreamRes;
-    try {
-      upstreamRes = await upstream(prepared, controller.signal);
-    } catch (err) {
-      // The client pressed Stop before upstream answered: nothing is owed to a
-      // connection that is already gone, and a 502 would only be logged against it.
-      if (controller.signal.aborted) return;
-      if (counters.content || counters.toolCalls) break;
-      return openAiError(res, 502, 'upstream request failed: ' + err.message);
-    }
-
-    if (!upstreamRes.ok) {
-      const { message, status } = await upstreamErrorText(upstreamRes);
-      const last = attempt === MAX_ATTEMPTS - 1;
-      // A 4xx is deterministic: retrying a region rejection, a bad model id or a
-      // rejected schema three times only triples how long the failure takes. A 429
-      // is stronger than deterministic — upstream() has already walked the whole
-      // account pool for this model, so the wall is somebody else's quota, not a
-      // hiccup. Retrying it re-sends the entire prompt for another 429.
-      const retryable = status >= 500;
-      if (!retryable || counters.content || counters.toolCalls || last) {
-        pacer.flush();
-        return openAiError(res, errorStatus(status), message.slice(0, 800) || 'upstream error', 'upstream_' + status);
+  try {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      const remainingClientBudget = CLIENT_WATCHDOG_MS - (Date.now() - lastClientActivityAt);
+      if (attempt > 0 && remainingClientBudget < 45_000) {
+        log(`client watchdog budget low (${Math.round(remainingClientBudget / 1000)}s left); surfacing retryable error instead of stalling`);
+        timedOut = true;
+        break;
       }
-      log(`upstream ${status} on attempt ${attempt + 1} for ${model}; retrying degraded`);
-      // Back off a little: a relay that just answered 502 in 40 ms is usually
-      // healthy again a second later, and an instant retry lands in the same hole.
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-      continue;
-    }
 
-    let failed = false;
-    let timed = false;
-    let sawFinish = false;
-    finish = null;
-    try {
-      for await (const payload of readSse(upstreamRes.body)) {
-        if (!timed && upstreamRes.__agAccount) {
-          timed = true;
-          recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
-        }
-        const response = parseSseJson(payload);
-        if (!response) continue;
-        if (response.usageMetadata) usage = response.usageMetadata;
-        const candidate = response.candidates && response.candidates[0];
-        if (!candidate) continue;
-        if (candidate.finishReason) {
-          finish = candidate.finishReason;
-          sawFinish = true;
-        }
+      const attemptStartedAt = Date.now();
+      const prepared = retryBody(body, attempt);
+      const suppressReasoning = Boolean(prepared.__suppressReasoning);
+      const splitter = new ThinkingStream();
+      clearHeldTimer();
+      held = '';
+      heldLive = false;
+      groupSignature = undefined;
+      unsigned = [];
+      // finish belongs to the attempt that produced it: a MAX_TOKENS/SAFETY reason
+      // from a discarded attempt must not describe the answer that replaced it.
+      finish = null;
+      let sawFinish = false;
 
-        for (const part of (candidate.content && candidate.content.parts) || []) {
-          // A signature can arrive on its own part, or on a later part than the
-          // call itself. Either way it belongs to every call of this response.
-          if (typeof part.thoughtSignature === 'string' && part.thoughtSignature) {
-            if (!groupSignature) groupSignature = part.thoughtSignature;
-            for (const pending of unsigned) {
-              rememberCall(pending.id, groupSignature, pending.name, pending.args);
-            }
-            unsigned = [];
-          }
-          if (part.functionCall) {
-            emitCall(part);
-            continue;
-          }
-          if (typeof part.text !== 'string') continue;
-          if (part.thought === true) {
-            if (suppressReasoning || !part.text.trim()) continue;
-            emitReasoning(part.text);
-            continue;
-          }
-          for (const piece of splitter.push(part.text)) {
-            if (piece.kind === 'reasoning') {
-              if (!suppressReasoning) emitReasoning(piece.text);
-            } else {
-              feedAnswer(piece.text);
-            }
-          }
-        }
+      let upstreamRes;
+      try {
+        const totalBudgetMs = Math.max(20_000, CLIENT_WATCHDOG_MS - (Date.now() - lastClientActivityAt));
+        upstreamRes = await upstream(prepared, controller.signal, { totalBudgetMs });
+      } catch (err) {
+        // The client pressed Stop before upstream answered: nothing is owed to a
+        // connection that is already gone, and a 502 would only be logged against it.
+        if (controller.signal.aborted) return;
+        if (err && err.name === 'TimeoutError') timedOut = true;
+        if (counters.content || counters.toolCalls) break;
+        const status = err && err.name === 'TimeoutError' ? 504 : 502;
+        return openAiError(res, status, `${status} upstream request failed: ${err.message}`);
       }
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      log('stream interrupted: ' + err.message);
-      failed = true;
-      interrupted = true;
-    }
 
-    for (const piece of splitter.flush()) {
-      if (piece.kind === 'reasoning') {
-        // Reasoning released after the answer started would reorder the turn.
-        if (!suppressReasoning && !counters.content) emitReasoning(piece.text);
-      } else {
-        feedAnswer(piece.text);
-      }
-    }
-
-    // A stream that ends without a finish reason was cut, not completed: the
-    // final chunk is where upstream says how the turn ended. Treating a lost tail
-    // as a normal stop is how half an answer becomes the stored answer.
-    if (!failed && !sawFinish) {
-      log('upstream stream ended without a finish reason; treating it as interrupted');
-      failed = true;
-      interrupted = true;
-    }
-
-    // Whatever the continuation said is known now that its stream is over.
-    if (trimWindow && pendingText) flushPending();
-
-    if (failed) {
-      const answeredNow = counters.content > 0 || counters.toolCalls > 0;
-      const room = attempt < MAX_ATTEMPTS - 1;
-      // A cut before the answer even started costs nothing to retry.
-      if (interrupted && !answeredNow && room) {
-        interrupted = false;
-        failed = false;
-        log(`upstream cut before any answer (attempt ${attempt + 1}); retrying`);
+      if (!upstreamRes.ok) {
+        const { message, status } = await upstreamErrorText(upstreamRes);
+        const last = attempt === MAX_ATTEMPTS - 1;
+        // A 4xx is deterministic: retrying a region rejection, a bad model id or a
+        // rejected schema three times only triples how long the failure takes. A 429
+        // is stronger than deterministic — upstream() has already walked the whole
+        // account pool for this model, so the wall is somebody else's quota, not a
+        // hiccup. Retrying it re-sends the entire prompt for another 429.
+        const retryable = status >= 500;
+        if (!retryable || counters.content || counters.toolCalls || last) {
+          pacer.flush();
+          const mapped = errorStatus(status);
+          return openAiError(res, mapped, `${mapped} ${message.slice(0, 800) || 'upstream error'}`, 'upstream_' + status);
+        }
+        log(`upstream ${status} on attempt ${attempt + 1} for ${model}; retrying degraded`);
+        // Back off a little: a relay that just answered 502 in 40 ms is usually
+        // healthy again a second later, and an instant retry lands in the same hole.
+        await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
         continue;
       }
-      // A cut in the middle of an answer is continued, not thrown away. Tool calls
-      // are the exception: half an argument list cannot be stitched together.
-      if (interrupted && answeredNow && !counters.toolCalls && resumes < RESUME_ATTEMPTS && room) {
-        const tail = answer.slice(-RESUME_ANCHOR);
-        if (tail.trim().length >= 40) {
-          resumes += 1;
-          log(`stream cut after ${counters.content} chars; continuing the answer (${resumes}/${RESUME_ATTEMPTS})`);
-          body = continuationBody(body, tail);
-          trimWindow = true;
-          pendingText = '';
-          interrupted = false;
-          failed = false;
-          continue;
+      lastUpstreamRes = upstreamRes;
+
+      let failed = false;
+      let timed = false;
+      const streamBudget = Math.min(
+        idleBudget(prepared),
+        Math.max(20_000, CLIENT_WATCHDOG_MS - (Date.now() - lastClientActivityAt)),
+      );
+      try {
+        for await (const payload of readSse(upstreamRes.body, streamBudget)) {
+          if (!timed) {
+            timed = true;
+            if (upstreamRes.__agStartedAt) firstChunkMs = Date.now() - upstreamRes.__agStartedAt;
+            if (upstreamRes.__agAccount) recordLatency(upstreamRes.__agAccount, firstChunkMs || 0);
+          }
+          const response = parseSseJson(payload);
+          if (!response) continue;
+          if (response.usageMetadata) usage = response.usageMetadata;
+          const candidate = response.candidates && response.candidates[0];
+          if (!candidate) continue;
+          if (candidate.finishReason) {
+            finish = candidate.finishReason;
+            sawFinish = true;
+          }
+
+          for (const part of (candidate.content && candidate.content.parts) || []) {
+            // A signature can arrive on its own part, or on a later part than the
+            // call itself. Either way it belongs to every call of this response.
+            if (typeof part.thoughtSignature === 'string' && part.thoughtSignature) {
+              if (!groupSignature) groupSignature = part.thoughtSignature;
+              for (const pending of unsigned) {
+                rememberCall(pending.id, groupSignature, pending.name, pending.args);
+              }
+              unsigned = [];
+            }
+            if (part.functionCall) {
+              emitCall(part);
+              continue;
+            }
+            if (typeof part.text !== 'string') continue;
+            if (part.thought === true) {
+              if (!part.text.trim()) continue;
+              // On retries, suppress short thoughts, but if the model keeps thinking
+              // past REASONING_HOLD_MS, stream them so the client watchdog stays alive.
+              if (suppressReasoning && Date.now() - attemptStartedAt < REASONING_HOLD_MS) continue;
+              emitReasoning(part.text);
+              continue;
+            }
+            for (const piece of splitter.push(part.text)) {
+              if (piece.kind === 'reasoning') {
+                if (!suppressReasoning || Date.now() - attemptStartedAt >= REASONING_HOLD_MS) emitReasoning(piece.text);
+              } else {
+                feedAnswer(piece.text);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        log('stream interrupted: ' + err.message);
+        const isTimeout = Boolean(err) && err.name === 'TimeoutError';
+        if (isTimeout) timedOut = true;
+        const stalledThought = isTimeout && !counters.content && !counters.toolCalls;
+        if (stalledThought) {
+          log(`thinking stalled on ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
+        }
+        failed = !stalledThought;
+        interrupted = !stalledThought;
+      }
+
+      clearHeldTimer();
+      for (const piece of splitter.flush()) {
+        if (piece.kind === 'reasoning') {
+          // Reasoning released after the answer started would reorder the turn.
+          if ((!suppressReasoning || Date.now() - attemptStartedAt >= REASONING_HOLD_MS) && !counters.content) {
+            emitReasoning(piece.text);
+          }
+        } else {
+          feedAnswer(piece.text);
         }
       }
-      break;
+      if (trimWindow && pendingText) flushPending();
+
+      // A stream that ends without a finish reason was cut, not completed: the last
+      // chunk is where upstream says how the turn ended. A lost tail read as a normal
+      // stop is how half an answer becomes the answer the client stores.
+      if (!failed && !sawFinish) {
+        log('upstream stream ended without a finish reason; treating it as interrupted');
+        failed = true;
+        interrupted = true;
+      }
+
+      // A turn that produced no answer keeps nothing: its held thoughts would
+      // render as a step that thinks and then does nothing at all.
+      if (!counters.content && !counters.toolCalls) {
+        held = '';
+        heldLive = false;
+      }
+
+      if (failed) {
+        const answeredNow = counters.content > 0 || counters.toolCalls > 0;
+        const room = attempt < MAX_ATTEMPTS - 1;
+        // A cut before the answer even started costs nothing to retry.
+        if (interrupted && !answeredNow && room) {
+          interrupted = false;
+          failed = false;
+          log(`upstream cut before any answer (attempt ${attempt + 1}); retrying`);
+          continue;
+        }
+        // A cut in the middle of an answer is continued, not thrown away. Tool calls
+        // are the exception: half an argument list cannot be stitched together.
+        if (interrupted && answeredNow && !counters.toolCalls && resumes < RESUME_ATTEMPTS && room) {
+          const tail = answer.slice(-RESUME_ANCHOR);
+          if (tail.trim().length >= 40) {
+            resumes += 1;
+            log(`stream cut after ${counters.content} chars; continuing the answer (${resumes}/${RESUME_ATTEMPTS})`);
+            body = continuationBody(body, tail);
+            trimWindow = true;
+            pendingText = '';
+            incomplete = true;
+            interrupted = false;
+            failed = false;
+            continue;
+          }
+        }
+        break;
+      }
+
+      incomplete = false;
+      if ((finish === 'MALFORMED_FUNCTION_CALL' || finish === 'UNEXPECTED_TOOL_CALL') && !counters.content && !counters.toolCalls && attempt < MAX_ATTEMPTS - 1) {
+        log(`upstream ${finish} for ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
+        continue;
+      }
+      if (counters.content || counters.toolCalls) break;
+      if (attempt === MAX_ATTEMPTS - 1) break;
+      log(`empty answer for ${model} (attempt ${attempt + 1}, finish=${finish || 'none'}, thinkChars=${counters.reasoning}); retrying with thinking reduced`);
     }
-    if (counters.content || counters.toolCalls) break;
-    if (attempt === MAX_ATTEMPTS - 1) break;
-    log(`empty answer for ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
-  }
 
-  // A continuation that never filled its window still produced text: keep it rather
-  // than throwing away the part the model did write.
-  flushPending();
+    // Nothing may still be queued when the closing chunk goes out, or the tail of
+    // the answer would arrive after finish_reason and be dropped by the client.
+    if (counters.content || counters.toolCalls) flushHeld();
+    pacer.flush();
+    flushSignatures();
 
-  // Nothing may still be queued when the closing chunk goes out, or the tail of
-  // the answer would arrive after finish_reason and be dropped by the client.
-  pacer.flush();
-  flushSignatures();
+    // Reasoning is not an answer. A client that receives thoughts and then
+    // finish_reason "stop" renders a step that said nothing, treats the turn as
+    // complete and stops the agent loop there — the task looks finished while nothing
+    // was produced. When nothing visible came out, an error is the honest result,
+    // even if reasoning already reached the wire.
+    const answered = counters.content > 0 || counters.toolCalls > 0;
+    if (!wrote || !answered) {
+      if (interrupted || incomplete) {
+        return openAiError(
+          res,
+          502,
+          '502 upstream stream ended without completion before any answer',
+          'stream_interrupted',
+        );
+      }
+      if (timedOut) {
+        return openAiError(
+          res,
+          504,
+          '504 upstream stream timed out before answering',
+          'upstream_timeout',
+        );
+      }
+      return openAiError(res, 502, '502 upstream returned an empty answer', 'empty_upstream_response');
+    }
 
-  // Reasoning is not an answer. A client that receives thoughts and then a
-  // finish_reason "stop" renders a step that said nothing, treats the turn as
-  // complete and stops the agent loop there — the task looks finished while
-  // nothing was produced. When nothing visible came out, an error is the honest
-  // result, even if reasoning already reached the wire.
-  const answered = counters.content > 0 || counters.toolCalls > 0;
-  if (!wrote || !answered) {
-    if (interrupted) {
+    if (interrupted || incomplete) {
+      // Half an answer is not an answer: say so, instead of ending the turn with
+      // finish_reason "stop" and letting the client store a cut sentence as final.
+      // openAiError turns this into an SSE error event once the headers are out.
+      log(`stream interrupted after ${counters.content} answer chars; reporting it to the client`);
       return openAiError(
         res,
         502,
-        'upstream stream was interrupted before any answer',
-        'stream_interrupted'
+        '502 upstream stream ended without completion; the answer above is incomplete',
+        'stream_interrupted',
       );
     }
-    if (counters.reasoning > 0) {
-      log(`upstream produced ${counters.reasoning} chars of reasoning and no answer; reporting a failure`);
+
+    // Only STOP is a normal end. Dressing a safety block or a broken tool call up as
+    // "stop" hands the client a turn that looks finished while nothing came out.
+    if (finish === 'MALFORMED_FUNCTION_CALL' || finish === 'UNEXPECTED_TOOL_CALL') {
+      log(`upstream could not build a valid tool call (${finish}); reporting it to the client`);
+      return openAiError(
+        res,
+        502,
+        `502 upstream could not build a valid tool call (${finish})`,
+        'upstream_function_call_failed',
+      );
     }
-    return openAiError(res, 502, 'upstream returned an empty answer', 'empty_upstream_response');
-  }
 
-  if (interrupted) {
-    // Half an answer is not an answer: say so, instead of ending the turn with
-    // finish_reason "stop" and letting the client store a cut sentence as final.
-    log(`stream interrupted after ${counters.content} answer chars; reporting it to the client`);
-    return openAiError(
-      res,
-      502,
-      'upstream stream was interrupted; the answer above is incomplete',
-      'stream_interrupted'
-    );
-  }
-
-  // Only STOP is a normal end. Dressing a safety block or a broken tool call up as
-  // "stop" hands the client a turn that looks finished while nothing came out.
-  if (finish === 'MALFORMED_FUNCTION_CALL' || finish === 'UNEXPECTED_TOOL_CALL') {
-    log(`upstream could not build a valid tool call (${finish}); reporting it to the client`);
-    return openAiError(
-      res,
-      502,
-      `upstream could not build a valid tool call (${finish})`,
-      'upstream_function_call_failed'
-    );
-  }
-
-  // A truncated turn is a truncated turn even when what survived looks like a tool
-  // call: reporting tool_calls here hides a cut-off argument list from the client.
-  const FILTERED = {
-    SAFETY: 1,
-    RECITATION: 1,
-    BLOCKLIST: 1,
-    PROHIBITED_CONTENT: 1,
-    SPII: 1,
-    IMAGE_SAFETY: 1,
-    OTHER: 1,
-  };
-  const finishReason =
-    finish === 'MAX_TOKENS'
-      ? 'length'
-      : FILTERED[finish]
-        ? 'content_filter'
-        : counters.toolCalls > 0
-          ? 'tool_calls'
+    const FILTERED = {
+      SAFETY: 1,
+      RECITATION: 1,
+      BLOCKLIST: 1,
+      PROHIBITED_CONTENT: 1,
+      SPII: 1,
+      IMAGE_SAFETY: 1,
+      OTHER: 1,
+    };
+    const finishReason = FILTERED[finish]
+      ? 'content_filter'
+      : counters.toolCalls > 0
+        ? 'tool_calls'
+        : finish === 'MAX_TOKENS'
+          ? 'length'
           : 'stop';
-  const finalChunk = {
-    id,
-    object: 'chat.completion.chunk',
-    created,
-    model,
-    choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-  };
-  if (usage) finalChunk.usage = usagePayload(usage);
-  if (usage) {
-    // The number that explains a burnt weekly limit, in the one place where it is
-    // visible: what this turn actually cost upstream.
-    log(
-      `usage: in=${usage.promptTokenCount || 0} out=${usage.candidatesTokenCount || 0}` +
-        ` think=${usage.thoughtsTokenCount || 0} cached=${usage.cachedContentTokenCount || 0}`,
-    );
+    const finalChunk = {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+    };
+    if (usage) finalChunk.usage = usagePayload(usage);
+    if (usage) {
+      // The number that explains a burnt weekly limit, in the one place where it is
+      // visible: what this turn actually cost upstream.
+      log(
+        `usage: in=${usage.promptTokenCount || 0} out=${usage.candidatesTokenCount || 0}` +
+          ` think=${usage.thoughtsTokenCount || 0} cached=${usage.cachedContentTokenCount || 0}` +
+          (firstChunkMs !== null ? ` ttft=${firstChunkMs}ms` : ''),
+      );
+    }
+    if (lastUpstreamRes) {
+      scheduleKeepAlive({
+        account: lastUpstreamRes.__agAccount,
+        payload: lastUpstreamRes.__agPayload,
+        usage,
+      });
+    }
+    sseHead(res);
+    res.write('data: ' + JSON.stringify(finalChunk) + '\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  } finally {
+    clearHeldTimer();
+    clearInterval(keepaliveTimer);
   }
-  sseHead(res);
-  res.write('data: ' + JSON.stringify(finalChunk) + '\n\n');
-  res.write('data: [DONE]\n\n');
-  res.end();
 }

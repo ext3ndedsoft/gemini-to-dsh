@@ -206,46 +206,62 @@ export async function generate(body, { signal, model } = {}) {
     tool_choice: undefined,
   };
 
-  const response = await upstream(request, signal);
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw Object.assign(new Error(`image model ${target} answered ${response.status}: ${text.slice(0, 300)}`), {
-      status: response.status,
-    });
-  }
-
-  const collected = [];
-  const parts = [];
-  for await (const payload of readSse(response.body)) {
-    const parsed = parseSseJson(payload);
-    if (!parsed) continue;
-    const candidate = parsed.candidates && parsed.candidates[0];
-    if (!candidate) continue;
-    for (const part of (candidate.content && candidate.content.parts) || []) {
-      if (part.inlineData && part.inlineData.data) {
-        collected.push({ mime: part.inlineData.mimeType || 'image/png', data: part.inlineData.data });
-        continue;
-      }
-      if (typeof part.text === 'string' && part.thought !== true) parts.push(part.text);
+  let geminiError = null;
+  try {
+    const response = await upstream(request, signal);
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw Object.assign(new Error(`image model ${target} answered ${response.status}: ${text.slice(0, 300)}`), {
+        status: response.status,
+      });
     }
+
+    const collected = [];
+    const parts = [];
+    for await (const payload of readSse(response.body)) {
+      const parsed = parseSseJson(payload);
+      if (!parsed) continue;
+      const candidate = parsed.candidates && parsed.candidates[0];
+      if (!candidate) continue;
+      for (const part of (candidate.content && candidate.content.parts) || []) {
+        if (part.inlineData && part.inlineData.data) {
+          collected.push({ mime: part.inlineData.mimeType || 'image/png', data: part.inlineData.data });
+          continue;
+        }
+        if (typeof part.text === 'string' && part.thought !== true) parts.push(part.text);
+      }
+    }
+
+    if (collected.length > 0) {
+      // The transport sends the same finished frame more than once, re-encoded: the
+      // bytes differ, the picture does not. Byte-identical hashes miss that, equal
+      // decoded size within 2% catches it, and a genuine second variant is bigger or
+      // smaller than that.
+      const files = [];
+      for (let i = 0; i < collected.length; i += 1) {
+        const current = collected[i];
+        const duplicate = collected.findIndex((other, j) => {
+          if (j <= i) return false;
+          const bigger = Math.max(current.data.length, other.data.length);
+          return Math.abs(current.data.length - other.data.length) / bigger < 0.02;
+        });
+        if (duplicate === -1) files.push(saveImage(current.mime, current.data));
+      }
+
+      const text = parts.join('').trim();
+      log(`image: ${target} produced ${files.length} file(s)${files.length ? ' -> ' + files.join(', ') : ''}`);
+      return { files, text, upstreamText: text };
+    }
+    throw new Error(`image model ${target} returned no inline image data`);
+  } catch (err) {
+    geminiError = err;
+    log(`image: ${target} failed (${err.message}). Checking API fallback...`);
   }
 
-  // The transport sends the same finished frame more than once, re-encoded: the
-  // bytes differ, the picture does not. Byte-identical hashes miss that, equal
-  // decoded size within 2% catches it, and a genuine second variant is bigger or
-  // smaller than that.
-  const files = [];
-  for (let i = 0; i < collected.length; i += 1) {
-    const current = collected[i];
-    const duplicate = collected.findIndex((other, j) => {
-      if (j <= i) return false;
-      const bigger = Math.max(current.data.length, other.data.length);
-      return Math.abs(current.data.length - other.data.length) / bigger < 0.02;
-    });
-    if (duplicate === -1) files.push(saveImage(current.mime, current.data));
+  if (IMAGE_BASE_URL && IMAGE_API_KEY) {
+    log(`image: falling back to API (${FALLBACK_IMAGE_MODEL} at ${IMAGE_BASE_URL})...`);
+    return await generateViaApi(body, { signal, model: FALLBACK_IMAGE_MODEL });
   }
 
-  const text = parts.join('').trim();
-  log(`image: ${target} produced ${files.length} file(s)${files.length ? ' -> ' + files.join(', ') : ''}`);
-  return { files, text, upstreamText: text };
+  throw geminiError || new Error(`Failed to generate image with ${target}`);
 }

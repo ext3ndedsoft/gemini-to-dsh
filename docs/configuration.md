@@ -18,9 +18,13 @@ Everything is environment variables; the full list with defaults is in [`.env.ex
 | `AG_EXHAUSTED_AT` | `0.05` | Threshold at which a pin stops being first |
 | `AG_PACE_MS` | `30` | Text emission beat; `AG_PACE=0` turns it off |
 | `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Which model draws pictures |
-| `AG_UPSTREAM_TIMEOUT_MS` | `150000` | How long upstream may stay silent before the first byte |
+| `AG_SEARCH_MODEL` | `gemini-3.5-flash-lite` | Default model for `POST /v1/search` (overridable in the panel) |
+| `AG_SEARCH_FALLBACK_MODEL` | `gemini-2.5-flash-lite` | Fallback model when the primary search model fails |
+| `AG_UPSTREAM_TIMEOUT_MS` | `120000` | How long upstream may stay silent before the first byte |
 | `AG_RESUME_ATTEMPTS` | `2` | How many times an answer cut mid-word is continued |
-| `AG_HUB_VERSION` | `2.26.0` | Version of the `hub` identity below which Google withholds some quota groups |
+| `AG_CLIENT_VERSION` | `2.34.0` | Antigravity client version sent in `loadCodeAssist` and `User-Agent` |
+| `AG_HUB_VERSION` | `2.34.0` | Version of the `hub` identity below which Google withholds some quota groups |
+| `AG_CACHE_KEEPALIVE` | `1` | `0` disables bounded KV-cache keep-alive pings for active sessions |
 | `AG_CLIENT_ID` / `AG_CLIENT_SECRET` | — | OAuth client for refreshing tokens |
 
 ## Tests

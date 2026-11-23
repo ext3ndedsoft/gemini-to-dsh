@@ -51,6 +51,7 @@ function sse(res, response) {
 }
 
 const attempts = new Map();
+const seenUpstream = { loadCodeAssist: null, search: null, chat: null };
 
 // A cut turn: the first leg stops mid-sentence, the continuation starts one
 // sentence early. The repeat has to be trimmed, not delivered twice.
@@ -65,21 +66,62 @@ function startStub(port) {
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', () => {
       const pathname = req.url.split('?')[0];
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       if (pathname.endsWith(':loadCodeAssist')) {
+        seenUpstream.loadCodeAssist = { ua: req.headers['user-agent'], body };
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ cloudaicompanionProject: 'stub-project' }));
       }
       if (pathname.endsWith(':fetchAvailableModels')) {
         res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ models: {} }));
+        return res.end(JSON.stringify({ models: {}, webSearchModelIds: ['gemini-3.5-flash-lite'] }));
       }
 
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       const contents = body.request?.contents || [];
       const text = contents
         .flatMap((entry) => entry.parts || [])
         .map((part) => part.text || '')
         .join(' ');
+      if (Array.isArray(body.request?.tools) && body.request.tools.some((t) => t && t.googleSearch)) {
+        seenUpstream.search = { ua: req.headers['user-agent'], body };
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(
+          JSON.stringify({
+            response: {
+              candidates: [
+                {
+                  content: { role: 'model', parts: [{ text: 'Grounded summary for stub query.' }] },
+                  finishReason: 'STOP',
+                  groundingMetadata: {
+                    webSearchQueries: ['stub search query'],
+                    groundingChunks: [
+                      { web: { uri: 'https://docs.example.com/release', title: 'docs.example.com' } },
+                      { web: { uri: 'https://example.org/notes', title: 'example.org' } },
+                    ],
+                    groundingSupports: [
+                      { segment: { text: 'Release v2.0 shipped.' }, groundingChunkIndices: [0] },
+                    ],
+                  },
+                },
+              ],
+              usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8, totalTokenCount: 20 },
+            },
+          }),
+        );
+      }
+      seenUpstream.chat = { ua: req.headers['user-agent'], body };
+      if (text.includes('echo-session')) {
+        return sse(res, {
+          candidates: [{ content: { role: 'model', parts: [{ text: 'SID:' + (body.request?.sessionId || 'none') }] }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 3, totalTokenCount: 13 },
+        });
+      }
+      if (text.includes('ping')) {
+        return sse(res, {
+          candidates: [{ content: { role: 'model', parts: [{ text: 'pong' }] }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1, totalTokenCount: 6 },
+        });
+      }
       if (text.includes('cutme')) {
         const continued = text.includes('The transport cut the previous reply');
         const parts = continued ? [{ text: CUT_REPEAT + CUT_REST }] : [{ text: CUT_FIRST }];
@@ -373,6 +415,140 @@ try {
   const readOnly = await fetch(BASE + '/accounts');
   check('reading accounts stays allowed', () => {
     assert.equal(readOnly.status, 200);
+  });
+
+  const routeTest = await fetch(BASE + '/accounts/test-route', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-3.8-flash' }),
+  });
+  const routeJson = await routeTest.json();
+  check('local /accounts/test-route works without bearer secret', () => {
+    assert.equal(routeTest.status, 200);
+    assert.equal(routeJson.ok, true);
+  });
+
+  const sidHeader = await fetch(BASE + '/v1/chat/completions', {
+    method: 'POST',
+    headers: { ...headers, 'x-session-id': 'sess-hdr-99' },
+    body: JSON.stringify({ model: 'gemini-3.8-flash', messages: [{ role: 'user', content: 'echo-session' }] }),
+  });
+  const sidHeaderJson = await sidHeader.json();
+  const sidHeader2 = await fetch(BASE + '/v1/chat/completions', {
+    method: 'POST',
+    headers: { ...headers, 'x-session-id': 'sess-hdr-99' },
+    body: JSON.stringify({ model: 'gemini-3.8-flash', messages: [{ role: 'user', content: 'echo-session other' }] }),
+  });
+  const sidHeader2Json = await sidHeader2.json();
+  check('x-session-id header hashes deterministically into int64 request.sessionId', () => {
+    assert.equal(sidHeader.status, 200);
+    assert.match(sidHeaderJson.choices[0].message.content, /^SID:-?\d+$/);
+    assert.equal(sidHeaderJson.choices[0].message.content, sidHeader2Json.choices[0].message.content);
+  });
+
+  const sidTurn1 = await fetch(BASE + '/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model: 'gemini-3.8-flash', messages: [{ role: 'user', content: 'echo-session turn1' }] }),
+  });
+  const sidTurn2 = await fetch(BASE + '/v1/chat/completions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: 'gemini-3.8-flash',
+      messages: [
+        { role: 'user', content: 'echo-session turn1' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'user', content: 'follow up' },
+      ],
+    }),
+  });
+  const sid1 = (await sidTurn1.json()).choices[0].message.content;
+  const sid2 = (await sidTurn2.json()).choices[0].message.content;
+  check('derived sessionId stays identical across turns', () => {
+    assert.match(sid1, /^SID:-?\d+$/);
+    assert.equal(sid1, sid2);
+  });
+
+  console.log('\nweb search endpoint & model config');
+
+  const searchCfg0 = await fetch(BASE + '/search/config');
+  const searchCfg0Json = await searchCfg0.json();
+  check('GET /search/config returns default search model list', () => {
+    assert.equal(searchCfg0.status, 200);
+    assert.equal(searchCfg0Json.model, null);
+    assert.ok(Array.isArray(searchCfg0Json.models) && searchCfg0Json.models.includes('gemini-3.5-flash-lite'));
+  });
+
+  const setSearchRes = await fetch(BASE + '/search/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'gemini-2.5-flash' }),
+  });
+  const setSearchJson = await setSearchRes.json();
+  check('POST /search/model updates default search model', () => {
+    assert.equal(setSearchRes.status, 200);
+    assert.equal(setSearchJson.model, 'gemini-2.5-flash');
+    assert.equal(setSearchJson.effectiveModel, 'gemini-2.5-flash');
+  });
+
+  const resetSearchRes = await fetch(BASE + '/search/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: null }),
+  });
+  const resetSearchJson = await resetSearchRes.json();
+  check('POST /search/model null resets back to auto', () => {
+    assert.equal(resetSearchRes.status, 200);
+    assert.equal(resetSearchJson.model, null);
+  });
+
+  const searchRes = await fetch(BASE + '/v1/search', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query: 'stub search query', maxResults: 5 }),
+  });
+  const searchJson = await searchRes.json();
+  check('POST /v1/search returns grounded summary, sources, and queries', () => {
+    assert.equal(searchRes.status, 200);
+    assert.equal(searchJson.object, 'search.result');
+    assert.equal(searchJson.content, 'Grounded summary for stub query.');
+    assert.deepEqual(searchJson.queries, ['stub search query']);
+    assert.equal(searchJson.sources.length, 2);
+    assert.equal(searchJson.sources[0].url, 'https://docs.example.com/release');
+    assert.equal(searchJson.sources[0].snippet, 'Release v2.0 shipped.');
+    assert.equal(searchJson.truncated, false);
+  });
+
+  const badSearch = await fetch(BASE + '/v1/search', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query: '   ' }),
+  });
+  check('POST /v1/search rejects empty query with 400', () => {
+    assert.equal(badSearch.status, 400);
+  });
+
+  const unauthSearch = await fetch(BASE + '/v1/search', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ query: 'test' }),
+  });
+  check('POST /v1/search enforces bearer auth', () => {
+    assert.equal(unauthSearch.status, 401);
+  });
+
+  check('upstream requests carry Antigravity 2.34.0 identity and envelope fields', () => {
+    assert.match(seenUpstream.loadCodeAssist?.ua || '', /^antigravity\/hub\/2\.34\.0 \(os_type=\w+; arch=\w+; aidev_client\)$/);
+    assert.equal(seenUpstream.loadCodeAssist?.body?.metadata?.ideType, 'ANTIGRAVITY');
+    assert.equal(seenUpstream.loadCodeAssist?.body?.metadata?.ideVersion, '2.34.0');
+    assert.equal(seenUpstream.loadCodeAssist?.body?.metadata?.ideName, 'antigravity');
+    assert.equal(seenUpstream.search?.body?.userAgent, 'antigravity');
+    assert.equal(seenUpstream.search?.body?.requestType, 'web_search');
+    assert.match(seenUpstream.search?.body?.requestId || '', /^web_search\/[0-9a-f-]+$/i);
+    assert.equal(seenUpstream.chat?.body?.userAgent, 'antigravity');
+    assert.match(seenUpstream.chat?.body?.requestType || '', /^(agent|chat)$/);
+    assert.match(seenUpstream.chat?.body?.requestId || '', /^(agent|chat)\/[0-9a-f-]+$/i);
   });
 } finally {
   cleanup();

@@ -34,26 +34,32 @@ import {
   orderedAccounts,
   recordLatency,
   removeAccount,
+  searchConfigReport,
+  warmQuotaSummaries,
   setEnabled,
   rotationOf,
   setPinned,
   setRotation,
+  setSearchModel,
   startLogin,
-  warmQuotaSummaries,
 } from './accounts.js';
-import { HOST, MODEL_ALIASES, PORT, SHARED_SECRET, log } from './lib/config.js';
+import { HOST, MODEL_ALIASES, PORT, SHARED_SECRET, VIRTUAL_MODELS, log } from './lib/config.js';
 import {
+  errorStatus,
   htmlPage,
   isLocal,
   jsonBody,
   openAiError,
   sendJson,
+  upstreamErrorText,
 } from './lib/http.js';
 import { handleOnce } from './lib/complete.js';
+import { stopAllKeepAlives } from './lib/cache-keepalive.js';
 import { answerText, generate, routeFor } from './lib/images.js';
+import { searchWeb } from './lib/search.js';
 import { saveSignatures } from './lib/signatures.js';
 import { handleStream } from './lib/stream.js';
-import { buildRequest, getCatalog, getProject } from './lib/upstream.js';
+import { buildRequest, getCatalog, getProject, parseSseJson, readSse, upstream } from './lib/upstream.js';
 
 async function handleModels(res) {
   let catalog = {};
@@ -64,7 +70,7 @@ async function handleModels(res) {
   }
   const data = [];
   for (const [id, meta] of Object.entries(catalog)) {
-    if (id.startsWith('tab_') || id.startsWith('chat_')) continue;
+    if (id.startsWith('tab_') || id.startsWith('chat_') || id.endsWith('-disabled') || !meta?.quotaInfo) continue;
     data.push({
       id,
       object: 'model',
@@ -83,16 +89,17 @@ async function handleModels(res) {
       supported_parameters: ['temperature', 'top_p', 'max_tokens', 'response_format'],
     });
   }
-  for (const [alias, target] of MODEL_ALIASES) {
+  for (const [alias, target] of [...MODEL_ALIASES, ...VIRTUAL_MODELS]) {
     if (data.some((model) => model.id === alias)) continue;
-    const meta = catalog[target] || {};
+    const meta = catalog[target];
+    if (!meta?.quotaInfo && !MODEL_ALIASES.some(([from]) => from === alias)) continue;
     data.push({
       id: alias,
       object: 'model',
       name: alias,
       owned_by: 'antigravity',
-      context_window: meta.maxTokens || 1_048_576,
-      max_output_tokens: meta.maxOutputTokens || 65_536,
+      context_window: meta?.maxTokens || 1_048_576,
+      max_output_tokens: meta?.maxOutputTokens || 65_536,
       architecture: {
         input_modalities: ['text', 'image'],
         output_modalities: ['text'],
@@ -141,9 +148,9 @@ async function probeAccount(id) {
       max_tokens: 8,
     });
     payload.project = (await getProject(account)) || undefined;
-    // A slow account is the thing being measured, so the probe has to outlive
-    // the header budget that protects real turns.
     const upstreamRes = await cloudPost(account, '/v1internal:streamGenerateContent?alt=sse', payload, {
+      // The point of a probe is to time a slow account, so it must outlive the
+      // header budget that protects real turns.
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       retries: 0,
       timeoutMs: PROBE_TIMEOUT_MS,
@@ -179,6 +186,42 @@ async function probeAccount(id) {
   }
 }
 
+async function testRoute(model = PROBE_MODEL) {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('route test timeout', 'TimeoutError')), 45_000);
+  try {
+    const upstreamRes = await upstream(
+      {
+        model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 64,
+        __thinking: 'off',
+      },
+      controller.signal,
+      { totalBudgetMs: 45_000 }
+    );
+    if (!upstreamRes.ok) {
+      const { message, status } = await upstreamErrorText(upstreamRes);
+      return { ok: false, status: errorStatus(status), error: message.slice(0, 300) || 'upstream ' + status };
+    }
+    let text = '';
+    for await (const payload of readSse(upstreamRes.body, 30_000)) {
+      const parsed = parseSseJson(payload);
+      const parts = parsed?.candidates?.[0]?.content?.parts || [];
+      for (const part of parts) {
+        if (typeof part.text === 'string' && part.thought !== true) text += part.text;
+      }
+      if (text.trim()) break;
+    }
+    return { ok: true, ms: Date.now() - startedAt, text: text.trim().slice(0, 80) };
+  } catch (err) {
+    return { ok: false, status: 502, error: err.message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function handleAccountRoutes(req, res, url) {
   if (!isLocal(req)) return openAiError(res, 403, 'local access only', 'forbidden');
   // Loopback is not a browser boundary: any page open on this machine is "local"
@@ -211,7 +254,7 @@ async function handleAccountRoutes(req, res, url) {
       return sendJson(res, 200, { ok: true, pinned: loadStore().pinned });
     }
     // "Move this session to that account": pin it, drop whatever cooldown it
-    // collected, and answer with the order the next request will follow.
+    // collected, and report the order the next request will actually follow.
     if (req.method === 'POST' && url.pathname === '/accounts/switch') {
       const body = await jsonBody(req).catch(() => ({}));
       if (!setPinned(body.id || null)) return openAiError(res, 404, 'unknown account');
@@ -222,7 +265,13 @@ async function handleAccountRoutes(req, res, url) {
     }
     if (req.method === 'POST' && url.pathname === '/accounts/check') {
       const body = await jsonBody(req).catch(() => ({}));
-      return sendJson(res, 200, await probeAccount(body.id));
+      const result = await probeAccount(body.id);
+      return sendJson(res, 200, result);
+    }
+    if (req.method === 'POST' && url.pathname === '/accounts/test-route') {
+      const body = await jsonBody(req).catch(() => ({}));
+      const result = await testRoute(body.model || PROBE_MODEL);
+      return sendJson(res, result.ok ? 200 : result.status || 502, result);
     }
     if (req.method === 'POST' && url.pathname === '/accounts/rotation') {
       const body = await jsonBody(req).catch(() => ({}));
@@ -237,6 +286,17 @@ async function handleAccountRoutes(req, res, url) {
       const body = await jsonBody(req).catch(() => ({}));
       if (!removeAccount(body.id)) return openAiError(res, 400, 'cannot remove that account');
       return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && url.pathname === '/search/config') {
+      return sendJson(res, 200, searchConfigReport());
+    }
+    if (req.method === 'POST' && url.pathname === '/search/model') {
+      const body = await jsonBody(req).catch(() => ({}));
+      if (body.model !== undefined && body.model !== null && typeof body.model !== 'string') {
+        return openAiError(res, 400, 'model must be a string or null');
+      }
+      setSearchModel(body.model ?? null);
+      return sendJson(res, 200, { ok: true, ...searchConfigReport() });
     }
     return openAiError(res, 404, 'not found');
   } catch (err) {
@@ -331,9 +391,9 @@ const server = http.createServer(async (req, res) => {
   } else if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(origin)) {
     res.setHeader('access-control-allow-origin', origin);
   } else {
-    // CORS only stops the page from *reading* the reply, not from sending it: a
-    // plain text/plain POST needs no preflight, so a foreign page would still be
-    // able to delete an account or spend quota. A foreign origin is refused here.
+    // CORS only stops the page from *reading* the reply, not from sending the
+    // request: a plain text/plain POST needs no preflight, so it would still
+    // delete an account or spend quota. A foreign origin is refused outright.
     log(`cors: refused origin ${origin}`);
     return openAiError(res, 403, 'cross-origin request refused', 'forbidden');
   }
@@ -368,7 +428,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Operator-facing surface for the DSH limits widget.
-  if (url.pathname === '/limits' || url.pathname.startsWith('/accounts')) {
+  if (url.pathname === '/limits' || url.pathname.startsWith('/accounts') || url.pathname.startsWith('/search/')) {
     return handleAccountRoutes(req, res, url);
   }
 
@@ -378,6 +438,33 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/api/v1/models')) {
     return handleModels(res);
+  }
+
+  if (req.method === 'POST' && (url.pathname === '/v1/search' || url.pathname === '/api/v1/search')) {
+    let body;
+    try {
+      body = await jsonBody(req);
+    } catch (err) {
+      return openAiError(res, err.status || 400, err.message);
+    }
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    try {
+      const result = await searchWeb(
+        { query: body?.query, maxResults: body?.maxResults, model: body?.model },
+        { signal: controller.signal },
+      );
+      return sendJson(res, 200, { object: 'search.result', ...result });
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const status = Number(err.status) || 502;
+      if (status >= 500) {
+        log('search failed: ' + (process.env.AG_DEBUG === '1' ? err.stack || err.message : err.message));
+      } else {
+        log(`search rejected (${status}): ${err.message}`);
+      }
+      return openAiError(res, status, err.message || 'search failed', err.code || 'search_error');
+    }
   }
 
   if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/api/v1/chat/completions')) {
@@ -399,7 +486,19 @@ const server = http.createServer(async (req, res) => {
         const messageChars = JSON.stringify(body.messages).length;
         log(`shape: model=${body.model} tools=${body.tools?.length || 0} (${toolChars} chars, ~${Math.round(toolChars / 4)} tok) messages=${body.messages.length} (${messageChars} chars, ~${Math.round(messageChars / 4)} tok)`);
       } else {
-        log(`turn: model=${body.model} tools=${body.tools?.length || 0} messages=${body.messages.length} max=${body.max_tokens ?? 'auto'} stream=${body.stream ? 'yes' : 'no'}`);
+        log(`turn: model=${body.model} tools=${body.tools?.length || 0} messages=${body.messages.length} max=${body.max_tokens ?? body.max_completion_tokens ?? 'auto'} stream=${body.stream ? 'yes' : 'no'}`);
+      }
+      if (!body.__sessionId) {
+        const headerSession =
+          req.headers['x-session-id'] ||
+          req.headers['session_id'] ||
+          req.headers['x-session-affinity'] ||
+          req.headers['x-client-request-id'];
+        body.__sessionId =
+          (typeof headerSession === 'string' && headerSession.trim()) ||
+          (typeof body.prompt_cache_key === 'string' && body.prompt_cache_key.trim()) ||
+          (typeof body.session_id === 'string' && body.session_id.trim()) ||
+          null;
       }
       // Asking any model for a picture lands on the image model: words, not a command.
       const imageRoute = routeFor(body);
@@ -427,14 +526,6 @@ server.requestTimeout = 0;
 server.headersTimeout = 120_000;
 server.keepAliveTimeout = 90_000;
 
-// Keep the five-hour numbers warm so ordering never falls back to "unknown".
-const WARM_MS = Number(process.env.AG_QUOTA_WARM_MS || 180_000);
-if (WARM_MS > 0) {
-  const warm = () => warmQuotaSummaries().catch(() => {});
-  setTimeout(warm, 8_000).unref?.();
-  setInterval(warm, WARM_MS).unref?.();
-}
-
 // Starting twice is the normal accident here (the DSH supervisor, the logon task
 // and start.cmd all launch the same file); a stack trace for it is noise.
 server.on('error', (err) => {
@@ -450,8 +541,17 @@ server.listen(PORT, HOST, () => {
   log(`antigravity-bridge listening on http://${HOST}:${PORT}`);
 });
 
+// Keep the five-hour numbers warm so account ordering never falls back to "unknown".
+const WARM_MS = Number(process.env.AG_QUOTA_WARM_MS || 180_000);
+if (WARM_MS > 0) {
+  const warm = () => warmQuotaSummaries().catch(() => {});
+  setTimeout(warm, 1_000).unref?.();
+  setInterval(warm, WARM_MS).unref?.();
+}
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    stopAllKeepAlives();
     saveSignatures();
     process.exit(0);
   });

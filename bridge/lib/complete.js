@@ -4,12 +4,14 @@
  */
 
 import { DEFAULT_MODEL, log } from './config.js';
+import { scheduleKeepAlive } from './cache-keepalive.js';
 import { chunkId, errorStatus, openAiError, sendJson, upstreamErrorText, usagePayload } from './http.js';
+import { sanitizeToolArgs } from './schema.js';
 import { newCallId, rememberCall, flushSignatures } from './signatures.js';
 import { MAX_ATTEMPTS, retryBody } from './stream.js';
 import { ThinkingStream } from './thinking.js';
 import { recordLatency } from '../accounts.js';
-import { parseSseJson, readSse, upstream } from './upstream.js';
+import { idleBudget, parseSseJson, readSse, upstream } from './upstream.js';
 
 // Same table as the streaming path: a safety stop is not a finished answer.
 const FILTERED_FINISH = {
@@ -34,10 +36,7 @@ export async function handleOnce(req, res, body) {
   const toolCalls = [];
   let finish = 'STOP';
   let usage = null;
-  /** Signature of the whole response: the model signs only its first call. */
-  let groupSignature;
-  /** Calls of this response that still have no signature, awaiting the group's. */
-  let unsigned = [];
+  let lastUpstreamRes = null;
   /** An upstream body that died mid-answer: retried, and named in the final error. */
   let interrupted = false;
 
@@ -72,19 +71,20 @@ export async function handleOnce(req, res, body) {
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
       continue;
     }
+    lastUpstreamRes = upstreamRes;
 
     text = '';
     reasoning = '';
     let timed = false;
     toolCalls.length = 0;
-    groupSignature = undefined;
-    unsigned = [];
+    let groupSignature;
+    let unsigned = [];
     // One streamer for the whole response: <thinking> tags arrive split across
     // chunks, and a per-chunk parse cannot see a tag that opened in another one.
     const splitter = new ThinkingStream();
 
     try {
-      for await (const payload of readSse(upstreamRes.body)) {
+      for await (const payload of readSse(upstreamRes.body, idleBudget(prepared))) {
         if (!timed && upstreamRes.__agAccount) {
           timed = true;
           recordLatency(upstreamRes.__agAccount, Date.now() - upstreamRes.__agStartedAt);
@@ -106,7 +106,7 @@ export async function handleOnce(req, res, body) {
           }
           if (part.functionCall) {
             const callId = part.functionCall.id || newCallId();
-            const args = part.functionCall.args || {};
+            const args = sanitizeToolArgs(part.functionCall.args || {});
             const signature = part.thoughtSignature || groupSignature;
             rememberCall(callId, signature, part.functionCall.name, args);
             if (!signature) unsigned.push({ id: callId, name: part.functionCall.name, args });
@@ -151,7 +151,15 @@ export async function handleOnce(req, res, body) {
       continue;
     }
 
-    if (text || toolCalls.length) break;
+    if (text || toolCalls.length) {
+      if ((finish === 'MALFORMED_FUNCTION_CALL' || finish === 'UNEXPECTED_TOOL_CALL') && !toolCalls.length && attempt < MAX_ATTEMPTS - 1) {
+        log(`upstream ${finish} for ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
+        text = '';
+        reasoning = '';
+        continue;
+      }
+      break;
+    }
     if (attempt === MAX_ATTEMPTS - 1) break;
     log(`empty answer for ${model} (attempt ${attempt + 1}); retrying with thinking reduced`);
   }
@@ -160,8 +168,10 @@ export async function handleOnce(req, res, body) {
     return openAiError(
       res,
       502,
-      interrupted ? 'upstream stream was interrupted before any answer' : 'upstream returned an empty answer',
-      interrupted ? 'stream_interrupted' : 'empty_upstream_response'
+      interrupted
+        ? '502 upstream stream ended without completion before any answer'
+        : '502 upstream returned an empty answer',
+      interrupted ? 'stream_interrupted' : 'empty_upstream_response',
     );
   }
 
@@ -173,7 +183,13 @@ export async function handleOnce(req, res, body) {
         ` think=${usage.thoughtsTokenCount || 0} cached=${usage.cachedContentTokenCount || 0}`,
     );
   }
-
+  if (lastUpstreamRes) {
+    scheduleKeepAlive({
+      account: lastUpstreamRes.__agAccount,
+      payload: lastUpstreamRes.__agPayload,
+      usage,
+    });
+  }
   sendJson(res, 200, {
     id: chunkId(),
     object: 'chat.completion',

@@ -41,6 +41,8 @@ const CHALLENGE_COOLDOWN_MS = 90 * 1000;
 const ATTEMPT_TIMEOUT_MS = 8000;
 const WEB_BUDGET_MS = 4500;
 const WEB_BUDGET_PROXIED_MS = 10000;
+const WEB_BUDGET_ANTIGRAVITY_MS = 18000;
+const ANTIGRAVITY_TIMEOUT_MS = 15000;
 const MAX_SOURCES = 20;
 const PROVIDER_ID = "web-search";
 
@@ -83,7 +85,7 @@ function unwrapUrl(href) {
 }
 
 const TRACKING = /^(utm_|fbclid$|gclid$|yclid$|mc_cid$|mc_eid$|ref_src$|igshid$)/i;
-const SEARCH_HOSTS = /(^|\.)(duckduckgo|mojeek|bing|google|yandex|searx|startpage|ecosia|brave)\.[a-z.]{2,}$/;
+const SEARCH_HOSTS = /^(?:(?:www|html|lite)\.)?(duckduckgo|mojeek|bing|google|yandex|searx|startpage|ecosia|brave)\.[a-z.]{2,}$/;
 
 function canonicalUrl(raw) {
   let parsed;
@@ -127,7 +129,7 @@ function providerError(message, cause) {
 
 /* ------------------------------------------------------------------ config */
 
-const KEYED = ["serper", "tavily", "brave", "google-cse", "exa"];
+const KEYED = ["antigravity", "serper", "tavily", "brave", "google-cse", "exa"];
 
 function readConfig() {
   let parsed = {};
@@ -138,6 +140,11 @@ function readConfig() {
   }
   const providers = { ...(parsed.providers ?? {}) };
   const env = (name) => (process.env[name] ?? "").trim();
+  const agUrl = env("AG_BRIDGE_URL");
+  const agKey = env("AG_BRIDGE_SECRET");
+  if (agUrl || agKey) {
+    providers.antigravity ??= { baseUrl: agUrl || "http://127.0.0.1:8787", key: agKey || "local-bridge" };
+  }
   providers.serper ??= { key: env("SERPER_API_KEY") };
   providers.tavily ??= { key: env("TAVILY_API_KEY") };
   providers.brave ??= { key: env("BRAVE_API_KEY") };
@@ -153,7 +160,9 @@ function readConfig() {
 
 function configured(providers, id) {
   const entry = providers[id];
-  if (!entry?.key) return false;
+  if (!entry) return false;
+  if (id === "antigravity") return Boolean(entry.key || entry.baseUrl);
+  if (!entry.key) return false;
   if (id === "google-cse") return Boolean(entry.cx);
   return true;
 }
@@ -161,6 +170,28 @@ function configured(providers, id) {
 /* --------------------------------------------------------------- providers */
 
 const adapters = {
+  async antigravity(query, max, entry, signal) {
+    const base = String(entry.baseUrl || "http://127.0.0.1:8787").replace(/\/+$/, "");
+    const key = entry.key || "local-bridge";
+    const timeout = AbortSignal.timeout(ANTIGRAVITY_TIMEOUT_MS);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const res = await fetch(`${base}/v1/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ query, maxResults: Math.min(max, 20), ...(entry.model ? { model: entry.model } : {}) }),
+      signal: combined
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`antigravity HTTP ${res.status}${detail ? `: ${detail.slice(0, 160)}` : ""}`);
+    }
+    const json = await res.json();
+    return {
+      content: typeof json.content === "string" ? json.content.trim() : "",
+      sources: Array.isArray(json.sources) ? json.sources : []
+    };
+  },
+
   async serper(query, max, entry, signal) {
     const res = await fetch(`${entry.baseUrl ?? "https://google.serper.dev"}/search`, {
       method: "POST",
@@ -629,11 +660,11 @@ function cacheGet(key) {
   }
   cache.delete(key); // refresh recency
   cache.set(key, hit);
-  return hit.sources;
+  return { sources: hit.sources, content: hit.content || "" };
 }
 
-function cacheSet(key, sources, ttl = CACHE_TTL_MS) {
-  cache.set(key, { sources, expires: Date.now() + ttl });
+function cacheSet(key, sources, ttl = CACHE_TTL_MS, content = "") {
+  cache.set(key, { sources, content, expires: Date.now() + ttl });
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
 }
 
@@ -645,7 +676,8 @@ function warm(key, query, max) {
   void (async () => {
     try {
       const sources = tidySources(await duckDuckGo(query, max), max);
-      if (sources.length > 0) cacheSet(key, tidySources([...sources, ...(cacheGet(key) ?? [])], max));
+      const prev = cacheGet(key);
+      if (sources.length > 0) cacheSet(key, tidySources([...sources, ...(prev?.sources ?? [])], max), CACHE_TTL_MS, prev?.content || "");
     } catch {
       /* the next real search will try again */
     } finally {
@@ -688,18 +720,21 @@ export function apply(ctx) {
       const key = `${query.toLowerCase()}|${max}`;
 
       const cached = cacheGet(key);
-      if (cached !== null) return { sources: cached, truncated: false };
+      if (cached !== null) return { ...(cached.content ? { content: cached.content } : {}), sources: cached.sources, truncated: false };
       const pending = inFlight.get(key);
       if (pending !== undefined) return pending;
 
       const run = (async () => {
         const { providers, order, transport } = readConfig();
         const failures = [];
+        const plan = chain(providers, order);
+        const hasAntigravity = plan.includes("antigravity");
 
         // The key-free sources run alongside the web layer, not after it: when
         // DuckDuckGo is throttled the tool still answers with Wikipedia and instant
-        // answers instead of failing outright.
-        const extras = gatherSources(query, max, signal).catch(() => []);
+        // answers instead of failing outright. When Antigravity is configured, skip
+        // starting free fallbacks unless Antigravity fails or returns empty.
+        let extras = hasAntigravity ? null : gatherSources(query, max, signal).catch(() => []);
 
         // A slow web layer must not hold the whole tool hostage: past the budget the
         // attempt is aborted and whatever the free sources found is returned.
@@ -707,12 +742,15 @@ export function apply(ctx) {
         const budget = signal === undefined ? stop.signal : AbortSignal.any([signal, stop.signal]);
         let deferred = false;
         const webAttempt = (async () => {
-          for (const id of chain(providers, order)) {
+          for (const id of plan) {
             try {
               const entry = id === "google-serp" ? providers.scraperapi : providers[id];
               const call = id === "duckduckgo" ? duckDuckGo(query, max, budget) : adapters[id](query, max, entry, budget);
-              const sources = tidySources(await call, max);
-              if (sources.length > 0) return sources;
+              const raw = await call;
+              const rawSources = Array.isArray(raw) ? raw : raw?.sources ?? [];
+              const content = !Array.isArray(raw) && typeof raw?.content === "string" ? raw.content.trim() : "";
+              const sources = tidySources(rawSources, max);
+              if (sources.length > 0 || content) return { sources, content, provider: id };
               failures.push(`${id}: gave nothing usable`);
             } catch (error) {
               if (signal?.aborted === true) throw error;
@@ -723,24 +761,30 @@ export function apply(ctx) {
               failures.push(`${id}: ${error.message}`);
             }
           }
-          return [];
+          return { sources: [], content: "", provider: null };
         })();
         const slow = Boolean(providers.scraperapi?.key) || Boolean(transport.proxy);
-        const timer = setTimeout(() => stop.abort(), slow ? WEB_BUDGET_PROXIED_MS : WEB_BUDGET_MS);
+        const budgetMs = hasAntigravity ? WEB_BUDGET_ANTIGRAVITY_MS : slow ? WEB_BUDGET_PROXIED_MS : WEB_BUDGET_MS;
+        const timer = setTimeout(() => stop.abort(), budgetMs);
         timer.unref?.();
-        const web = await webAttempt.catch(() => []);
+        const web = await webAttempt.catch(() => ({ sources: [], content: "", provider: null }));
         clearTimeout(timer);
 
-        const merged = tidySources([...web, ...(await extras)], max);
-        if (merged.length === 0) {
+        if (web.provider !== "antigravity" && extras === null) {
+          extras = gatherSources(query, max, signal).catch(() => []);
+        }
+        const extraSources = web.provider === "antigravity" ? [] : await extras;
+        const merged = tidySources([...web.sources, ...extraSources], max);
+        const content = web.content || "";
+        if (merged.length === 0 && !content) {
           const reason = failures.length > 0 ? failures.join(" | ") : deferred ? "duckduckgo: paced, nothing else matched" : "no provider returned usable sources";
           throw providerError(`search failed — ${reason}`);
         }
         // A webless answer is a stand-in, not the real thing: keep it briefly so a
         // retry after the cooldown can still upgrade it.
-        cacheSet(key, merged, web.length > 0 ? CACHE_TTL_MS : FALLBACK_TTL_MS);
-        if (deferred && web.length === 0) warm(key, query, max);
-        return { sources: merged, truncated: false };
+        cacheSet(key, merged, web.sources.length > 0 || content ? CACHE_TTL_MS : FALLBACK_TTL_MS, content);
+        if (deferred && web.sources.length === 0 && !content) warm(key, query, max);
+        return { ...(content ? { content } : {}), sources: merged, truncated: false };
       })();
 
       inFlight.set(key, run);
