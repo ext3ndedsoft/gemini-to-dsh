@@ -166,9 +166,9 @@ const modeTag = variant === 'dns' ? '01 · DNS + AUTO SEARCH' : '02 · PROXY + M
 const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>
 <style>
-  html,body{margin:0;width:448px;height:1138px;background:#ffffff;overflow:hidden}
-  body{padding:20px 24px;box-sizing:border-box;font-family:ui-sans-serif,system-ui;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
-    border:2px solid #0a0a0a;border-radius:18px}
+  html,body{margin:0;width:448px;height:1138px;background:transparent;overflow:hidden}
+  .frame{width:448px;height:1138px;padding:20px 24px;box-sizing:border-box;font-family:ui-sans-serif,system-ui;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+    background:#ffffff;border:2px solid #0a0a0a;border-radius:18px;overflow:hidden}
   .top-bar{width:396px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
   .tag-blk{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;background:#0a0a0a;color:#fff;
     font-family:Consolas,'Cascadia Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.7px}
@@ -189,6 +189,7 @@ ${styles}
   .agq, .agq *{animation:none !important;transition:none !important;opacity:1 !important}
 </style></head>
 <body>
+<div class="frame">
 <div class="top-bar">
   <span class="tag-blk"><i></i>${modeTag}</span>
   <span class="tag-wht">127.0.0.1:8787</span>
@@ -240,6 +241,7 @@ ${styles}
     </div>
   </div></div>
   ${pillMarkup(71, 'var(--good)', variant === 'dns' ? 'DNS' : 'PROXY')}
+</div>
 </div>
 </body></html>`;
 
