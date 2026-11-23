@@ -42,7 +42,7 @@ function ring(pct, size = 46, bare = false, thin = false) {
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (pct / 100) * circumference;
   return `<div class="ring" style="width:${size}px;height:${size}px"><svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="${stroke}"/>
+    <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="${stroke}"/>
     <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="${tone(pct)}" stroke-width="${stroke}" stroke-linecap="round"
       stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"/>
   </svg>${bare ? '' : `<b>${pct}%</b>`}</div>`;
@@ -145,9 +145,10 @@ const stateLine =
 if (variant === 'pill') {
   const page = [
     '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>pill</title><style>',
-    'html,body{margin:0;background:#07070b}',
+    'html,body{margin:0;background:#fff}',
     'body{padding:14px;display:inline-block}',
     styles,
+    '.agq{--good:#ffffff;--warn:#d4d4d8;--bad:#71717a}',
     '.agq *{animation:none !important;transition:none !important;opacity:1 !important}',
     '.row{display:flex;gap:10px;align-items:center}',
     '</style></head><body><div class="agq"><div class="row">',
@@ -160,23 +161,38 @@ if (variant === 'pill') {
   process.exit(0);
 }
 
+const modeTag = variant === 'dns' ? '01 · DNS + AUTO SEARCH' : '02 · PROXY + MANUAL MODEL';
+
 const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>
 <style>
-  html,body{margin:0;width:432px;height:1076px;background:
-    radial-gradient(90% 70% at 75% 6%,#14161d,transparent 62%),#07070b;}
-  body{padding:20px;box-sizing:border-box;font-family:ui-sans-serif,system-ui;display:flex;justify-content:center;align-items:flex-start}
-  .agq{position:relative;display:flex;flex-direction:column;align-items:flex-end;width:392px}
+  html,body{margin:0;width:448px;height:1138px;background:#ffffff;overflow:hidden}
+  body{padding:20px 24px;box-sizing:border-box;font-family:ui-sans-serif,system-ui;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+    border:2px solid #0a0a0a;border-radius:18px}
+  .top-bar{width:396px;display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .tag-blk{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;background:#0a0a0a;color:#fff;
+    font-family:Consolas,'Cascadia Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.7px}
+  .tag-blk i{width:5px;height:5px;border-radius:50%;background:#fff}
+  .tag-wht{padding:4px 11px;border-radius:999px;background:#fff;color:#0a0a0a;border:1.5px solid #0a0a0a;box-shadow:2px 2px 0 #0a0a0a;
+    font-family:Consolas,'Cascadia Mono',monospace;font-size:10px;font-weight:800;letter-spacing:0.5px}
+  .agq{position:relative;display:flex;flex-direction:column;align-items:flex-end;width:396px}
 ${styles}
-  /* after the real stylesheet, so these win: the panel scrolls in the app, a docs shot shows it whole */
-  .agq .panel{max-height:none;width:392px}
+  /* after the real stylesheet, so these win: pure B&W manga contrast + full panel height */
+  .agq{--good:#ffffff;--warn:#d4d4d8;--bad:#71717a}
+  .agq .panel{max-height:none;width:396px;border:2px solid #0a0a0a;box-shadow:6px 6px 0 rgba(10,10,10,0.22)}
   .agq .panel-in{max-height:none}
   .agq .scroll{max-height:none;overflow:visible;mask-image:none;flex:none}
   .agq .foot{position:static}
+  .agq .foot .btn{white-space:nowrap}
+  .agq .pill{border:2px solid #0a0a0a;box-shadow:4px 4px 0 rgba(10,10,10,0.22)}
   /* a screenshot is one frame: settle everything instead of catching the entrance */
   .agq, .agq *{animation:none !important;transition:none !important;opacity:1 !important}
 </style></head>
 <body>
+<div class="top-bar">
+  <span class="tag-blk"><i></i>${modeTag}</span>
+  <span class="tag-wht">127.0.0.1:8787</span>
+</div>
 <div class="agq">
   <div class="panel"><div class="panel-in">
     <div class="head">
@@ -191,7 +207,7 @@ ${styles}
         <button>VPN</button>
         <button>Direct</button>
       </div>
-      <div class="state"><span class="dot" style="background:var(--good);box-shadow:0 0 8px var(--good)"></span>${stateLine}</div>
+      <div class="state"><span class="dot" style="background:var(--good);box-shadow:0 0 6px rgba(255,255,255,0.6)"></span>${stateLine}</div>
       ${variant === 'dns' ? dnsPanel : proxyPanel}
       <div class="relay">
         <div class="txt"><b>Relay</b><span>${variant === 'dns' ? 'DNS' : 'Proxy'} · 132 ok · 0 fail</span></div>

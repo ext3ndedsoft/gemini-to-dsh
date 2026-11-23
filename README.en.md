@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="assets/banner.en.svg?v=7" alt="gemini→dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
+  <img src="assets/banner.en.png?v=8" alt="gemini-to-dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/NODE-%E2%89%A520-7c6cff?style=for-the-badge&labelColor=0b0f17&logo=nodedotjs&logoColor=white" alt="Node 20+">
-  <img src="https://img.shields.io/badge/DEPENDENCIES-NONE-31d0aa?style=for-the-badge&labelColor=0b0f17" alt="No dependencies">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/LICENSE-MIT-0a0a0a?style=for-the-badge&labelColor=ffffff" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/NODE-%E2%89%A520-ffffff?style=for-the-badge&labelColor=0a0a0a&logo=nodedotjs&logoColor=white" alt="Node 20+">
+  <img src="https://img.shields.io/badge/DEPENDENCIES-NONE-0a0a0a?style=for-the-badge&labelColor=ffffff" alt="No dependencies">
 </p>
 
 <p align="center"><a href="README.md">Русский</a> · <b>English</b></p>
@@ -21,9 +21,9 @@
 - **Corner overlay panel** — shows per-window and per-model quotas, response latency, active egress route, and the `web-search` model selector.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=6" alt="Quota and egress panel: DNS mode" width="360">
+  <img src="assets/panel-dns.png?v=8" alt="Quota and egress panel: DNS mode" width="360">
   &nbsp;&nbsp;
-  <img src="assets/panel-proxy.png?v=6" alt="Quota and egress panel: Proxy mode" width="360">
+  <img src="assets/panel-proxy.png?v=8" alt="Quota and egress panel: Proxy mode" width="360">
 </p>
 
 ## Quick install
