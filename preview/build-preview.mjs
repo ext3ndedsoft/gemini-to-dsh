@@ -163,14 +163,13 @@ if (variant === 'pill') {
 const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>
 <style>
-  html,body{margin:0;background:
-    radial-gradient(90% 70% at 75% 6%,#14161d,transparent 62%),
-    radial-gradient(70% 60% at 8% 96%,#0d1514,transparent 60%),#07070b;}
-  body{padding:18px;font-family:ui-sans-serif,system-ui;display:inline-block}
-  .agq{position:relative;display:flex;flex-direction:column;align-items:flex-end}
+  html,body{margin:0;width:432px;height:1076px;background:
+    radial-gradient(90% 70% at 75% 6%,#14161d,transparent 62%),#07070b;}
+  body{padding:20px;box-sizing:border-box;font-family:ui-sans-serif,system-ui;display:flex;justify-content:center;align-items:flex-start}
+  .agq{position:relative;display:flex;flex-direction:column;align-items:flex-end;width:392px}
 ${styles}
   /* after the real stylesheet, so these win: the panel scrolls in the app, a docs shot shows it whole */
-  .agq .panel{max-height:none}
+  .agq .panel{max-height:none;width:392px}
   .agq .panel-in{max-height:none}
   .agq .scroll{max-height:none;overflow:visible;mask-image:none;flex:none}
   .agq .foot{position:static}
