@@ -75,13 +75,24 @@ function account({ email, tier, groups, models, pinned, latency, when, requests 
   </div>`;
 }
 
-const pillMarkup = (pct, tone) =>
-  '<div class="agq"><div class="pill">' + ring(pct, 26, true, true) +
-  '<span><b>' + pct + '%</b><span class="cap"><i class="st" style="background:' + tone +
-  ';color:' + tone + '"></i>Gemini bridge</span></span></div></div>';
+const pillMarkup = (pct, toneColor, routeLabel = 'DNS') =>
+  '<div class="pill">' +
+  ring(pct, 26, true, true) +
+  '<span class="txt"><b>' + pct + '%</b><span class="cap"><i class="st" style="background:' + toneColor +
+  '"></i>сброс 6д</span></span>' +
+  '<span class="route"><i class="st" style="background:var(--good)"></i>' + routeLabel + '</span>' +
+  '</div>';
 
 const chain = 'bezmezhau › geohideeu › geohide › magicdns › direct';
 const channels = ['bezmezhau', 'geohideeu', 'geohide', 'magicdns'];
+const searchModels = [
+  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-3-flash',
+  'gemini-3.8-flash-tiered',
+];
 
 const dnsPanel = `<div class="sub">
   <div class="subhead">выход dns</div>
@@ -108,6 +119,24 @@ const proxyPanel = `<div class="sub">
   <div class="hint">адрес пишется в ~/.dsh/ag-egress.json; «проверить» ничего не меняет</div>
 </div>`;
 
+const searchPanel = `<div class="sub">
+  <div class="subhead">web-search модель</div>
+  <div class="chips" style="margin-bottom:0">
+    <button class="chip-btn${variant === 'dns' ? ' on' : ''}">auto</button>
+    ${searchModels
+      .map((id) => {
+        const active = variant === 'proxy' && id === 'gemini-2.5-flash-lite';
+        return `<button class="chip-btn${active ? ' on' : ''}">${id.replace(/^gemini-/, '')}</button>`;
+      })
+      .join('')}
+  </div>
+  <div class="hint">${
+    variant === 'dns'
+      ? 'сейчас: gemini-3.5-flash-lite · авто из каталога'
+      : 'сейчас: gemini-2.5-flash-lite · выбрана вручную'
+  }</div>
+</div>`;
+
 const stateLine =
   variant === 'dns'
     ? `<em>${chain}</em>`
@@ -116,15 +145,15 @@ const stateLine =
 if (variant === 'pill') {
   const page = [
     '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>pill</title><style>',
-    'html,body{margin:0;background:radial-gradient(80% 70% at 70% 10%,#1a1a29,transparent 60%),#0a0a11}',
+    'html,body{margin:0;background:#07070b}',
     'body{padding:14px;display:inline-block}',
     styles,
     '.agq *{animation:none !important;transition:none !important;opacity:1 !important}',
     '.row{display:flex;gap:10px;align-items:center}',
-    '</style></head><body><div class="row">',
-    pillMarkup(100, "var(--good)") + pillMarkup(71, "var(--good)") + pillMarkup(12, "var(--warn)"),
-    '</div></body></html>'
-  ].join("\n");
+    '</style></head><body><div class="agq"><div class="row">',
+    pillMarkup(100, 'var(--good)', 'DNS') + pillMarkup(71, 'var(--good)', 'PROXY') + pillMarkup(12, 'var(--warn)', 'DIRECT'),
+    '</div></div></body></html>',
+  ].join('\n');
   const out = path.join(here, 'preview-pill.html');
   fs.writeFileSync(out, page);
   console.log('written:', out);
@@ -135,10 +164,10 @@ const html = `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><title>quota-overlay preview · ${variant}</title>
 <style>
   html,body{margin:0;background:
-    radial-gradient(90% 70% at 75% 6%,#1b1b2b,transparent 62%),
-    radial-gradient(70% 60% at 8% 96%,#101a22,transparent 60%),#07070b;}
+    radial-gradient(90% 70% at 75% 6%,#14161d,transparent 62%),
+    radial-gradient(70% 60% at 8% 96%,#0d1514,transparent 60%),#07070b;}
   body{padding:18px;font-family:ui-sans-serif,system-ui;display:inline-block}
-  .agq{position:relative}
+  .agq{position:relative;display:flex;flex-direction:column;align-items:flex-end}
 ${styles}
   /* after the real stylesheet, so these win: the panel scrolls in the app, a docs shot shows it whole */
   .agq .panel{max-height:none}
@@ -153,7 +182,8 @@ ${styles}
   <div class="panel"><div class="panel-in">
     <div class="head">
       <span class="mark">A</span><div><h1>Antigravity</h1><small>1 акк. · Google AI Pro · маршрут и квоты</small></div>
-      <button class="icon">⟳</button>
+      <button class="icon" aria-label="обновить"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M12.9 8a4.9 4.9 0 1 1-1.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13.2 2.9v2.8H10.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="icon" aria-label="закрыть">×</button>
     </div>
     <div class="scroll">
       <div class="seg"><span class="thumb" style="left:calc(3px + ${variant === 'dns' ? 0 : 1} * ((100% - 6px) / 4))"></span>
@@ -170,9 +200,10 @@ ${styles}
       </div>
       <div class="guard">
         <div class="txt"><b>сторож 5h</b><span>уводить запросы на другой аккаунт, когда пятичасовое ниже порога</span></div>
-        <label class="num"><input value="5" readonly>%</label>
+        <label class="num"><input value="5" readonly><span>%</span></label>
         <button class="switch on"><i></i></button>
       </div>
+      ${searchPanel}
       <div class="sect">accounts</div>
       ${account({
         email: 'someone@example.com',
@@ -182,15 +213,18 @@ ${styles}
         when: '2 мин назад',
         requests: '6 запр.',
         groups: [{ name: 'Gemini Models', weekly: 71, five: 99, reset: 'in 6d 22h' }],
-        models: [{ id: 'gemini-3.8-flash-tiered', pct: 99, reset: 'in 3h 44m' }]
+        models: [
+          { id: 'gemini-4-hydrogen-sonar', pct: 99, reset: 'in 3h 44m' },
+          { id: 'gemini-3.8-flash-tiered', pct: 99, reset: 'in 3h 44m' },
+        ],
       })}
     </div>
     <div class="foot">
-      <button class="btn wide">+ аккаунт</button>
-      <button class="btn">маршрут</button>
-      <button class="btn">скрыть</button>
+      <button class="btn wide primary">+ аккаунт</button>
+      <button class="btn">проверить маршрут</button>
     </div>
   </div></div>
+  ${pillMarkup(71, 'var(--good)', variant === 'dns' ? 'DNS' : 'PROXY')}
 </div>
 </body></html>`;
 

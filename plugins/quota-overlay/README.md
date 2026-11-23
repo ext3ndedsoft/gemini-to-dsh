@@ -4,8 +4,8 @@ A quota panel for the DSH shell: every account, both Google windows, and the tra
 in one card in the corner. No chat commands; every action is a button.
 
 <p align="center">
-  <img src="../../assets/panel-dns.png" alt="quota panel, DNS mode" width="360">
-  <img src="../../assets/panel-proxy.png" alt="quota panel, Proxy mode" width="360">
+  <img src="../../assets/panel-dns.png?v=5" alt="quota panel, DNS mode" width="360">
+  <img src="../../assets/panel-proxy.png?v=5" alt="quota panel, Proxy mode" width="360">
 </p>
 
 ## What it shows

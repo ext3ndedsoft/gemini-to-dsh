@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.en.svg?v=4" alt="gemini→dsh — Gemini in DeepSeek Harness" width="100%">
+  <img src="assets/banner.en.svg?v=5" alt="gemini→dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
@@ -10,27 +10,25 @@
 
 <p align="center"><a href="README.md">Русский</a> · <b>English</b></p>
 
-**gemini-to-dsh** connects Gemini to [DSH](https://github.com/deepseek-ai/deepseek-harness) and to any client that speaks OpenAI. It is a small local bridge plus a panel in DSH that shows quota per account and switches how traffic leaves your machine when Google is not directly reachable.
-
-No dependencies, Node 20+.
+**gemini-to-dsh** brings Gemini (3.x / 4) and live Google Search to [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and any OpenAI-compatible client. It is a zero-dependency local bridge on Node.js paired with a compact overlay panel inside DSH.
 
 ## What you get
 
-- **Gemini in DSH** — streaming, tools, images, thinking, effort routing, and KV-cache keep-alive.
-- **Several accounts** — a request goes where the most quota is left, before a `429`.
-- **Network egress** — `DNS`, `Proxy`, `VPN` or `Direct`; a watchdog routes around a dead channel on its own.
-- **Quota panel** — the five-hour and weekly window of every account, the egress switch, and the default `web-search` model selector.
-- **Web search** (via Cloud Code Google Search grounding or external providers) and **lean-context** — optional, as separate plugins.
+- **Full Gemini support in DSH** — smooth paced streaming, native tool calling, image generation, thinking (`reasoning_effort`), automatic continuation on cut streams, and KV-cache keep-alive for long sessions.
+- **Smart account rotation** — tracks both 5-hour and weekly quota windows per account and shifts traffic before hitting `429`.
+- **Live Google Search grounding** — `/v1/search` and the `web-search` plugin return a grounded summary plus resolved source URLs; you can pick the default search model right from the panel.
+- **Scoped network egress** — `DNS`, `Proxy`, `VPN`, or `Direct`. Only `*.googleapis.com` traffic uses the selected route; everything else on your machine stays untouched.
+- **Corner overlay panel** — shows per-window and per-model quotas, response latency, active egress route, and the `web-search` model selector.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=4" alt="Panel: DNS mode" width="384">
-  &nbsp;
-  <img src="assets/panel-proxy.png?v=4" alt="Panel: Proxy mode" width="384">
+  <img src="assets/panel-dns.png?v=5" alt="Quota and egress panel: DNS mode" width="360">
+  &nbsp;&nbsp;
+  <img src="assets/panel-proxy.png?v=5" alt="Quota and egress panel: Proxy mode" width="360">
 </p>
 
-## Install
+## Quick install
 
-You need Node 20+ and DSH started at least once (so a profile exists).
+Requires **Node.js 20+** and DSH started at least once (so a profile directory exists).
 
 ```bash
 git clone https://github.com/ext3ndedsoft/gemini-to-dsh.git
@@ -38,7 +36,7 @@ cd gemini-to-dsh
 node install.mjs
 ```
 
-Without a clone — download one file and it fetches the rest itself:
+Or install in one command without cloning manually:
 
 ```powershell
 # Windows (PowerShell)
@@ -50,29 +48,30 @@ irm https://raw.githubusercontent.com/ext3ndedsoft/gemini-to-dsh/main/install.mj
 curl -fsSLO https://raw.githubusercontent.com/ext3ndedsoft/gemini-to-dsh/main/install.mjs && node install.mjs
 ```
 
-The installer finds the DSH profile, puts the bridge into `~/.dsh/bridge` and the panel into the profile, adds it to `cordis.patch.yml` (a copy is saved as `.bak`), checks the syntax and tells you which credentials are still missing. To update, run it again; your `.env` and `ag-egress.json` are left alone.
+The installer locates your DSH profile, copies the bridge to `~/.dsh/bridge`, installs the overlay plugin, and adds it to `cordis.patch.yml` (saving a `.bak` backup). Re-running it updates the code while leaving your `.env` and `ag-egress.json` intact.
 
 ```bash
-node install.mjs --with web-search,lean-context   # plus the other plugins (or --all)
-node install.mjs --dry-run                        # only show what would happen
+node install.mjs --with web-search,lean-context   # include web search and context pruning (or --all)
+node install.mjs --dry-run                        # preview changes without writing anything
 node install.mjs --uninstall                      # remove plugins and profile entries
 ```
 
-Then restart DSH: the panel appears in the bottom-right corner.
+Restart DSH afterwards — the quota pill will appear in the bottom-right corner.
 
-## Accounts
+## Accounts & OAuth
 
-The bridge uses the OAuth tokens that a Google AI Pro subscription already created on the machine (Cloud Code access, not a free-tier key). Put them where the bridge expects them:
+The bridge reuses the OAuth session from your Google AI Pro subscription (Cloud Code access, not a free-tier API key):
 
-- `~/.gemini/oauth_creds.json` — the first account;
-- `~/.gemini/dsh-bridge/accounts.json` — a rotation set (optional).
+- `~/.gemini/oauth_creds.json` — primary account (picked up automatically if you signed in via Antigravity or Gemini CLI);
+- `~/.gemini/dsh-bridge/accounts.json` — optional pool of extra accounts for rotation (you can add more via `+ аккаунт` in the panel).
 
-Point `AG_CREDS_FILE` and `AG_ACCOUNTS_FILE` elsewhere if you like. The OAuth client used to refresh the tokens is **not part of the repository**: set `AG_CLIENT_ID` and `AG_CLIENT_SECRET`, or put them in `~/.dsh/ag-oauth.json`.
+Override paths with `AG_CREDS_FILE` and `AG_ACCOUNTS_FILE`. The OAuth client credentials used to refresh tokens are **not shipped in this repository** — set `AG_CLIENT_ID` and `AG_CLIENT_SECRET` or place them in `~/.dsh/ag-oauth.json`.
 
 ## Connecting to DSH
 
+Add the provider to `~/.dsh/profiles/web/cordis.patch.yml`:
+
 ```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
 - id: agent-default-model
   config:
     provider: antigravity
@@ -80,32 +79,43 @@ Point `AG_CREDS_FILE` and `AG_ACCOUNTS_FILE` elsewhere if you like. The OAuth cl
     reasoningEffort: medium
 ```
 
-The bridge listens on `127.0.0.1:8787` and accepts the bearer that matches `AG_BRIDGE_SECRET` (default `local-bridge`).
+To route DSH's `web_search` tool through the bridge's Google Search grounding, add to `~/.dsh/search.json`:
+
+```json
+{
+  "order": ["antigravity"],
+  "providers": {
+    "antigravity": { "baseUrl": "http://127.0.0.1:8787", "key": "local-bridge" }
+  }
+}
+```
+
+The bridge binds to loopback `127.0.0.1:8787` only and checks the bearer token against `AG_BRIDGE_SECRET` (default `local-bridge`).
 
 ## If Google is not reachable directly
 
-Nothing to do: the `DNS` channel chain is baked into the defaults, and every two minutes the watchdog probes the live channel with a real response and moves to the next one after two failures. Pick your own channel, a proxy or a VPN in the panel.
+No manual setup is needed: a `DNS` relay chain is enabled by default, and a background watchdog probes the active channel every two minutes with a real request, switching automatically after two failures. You can switch modes or configure a custom proxy directly in the panel.
 
-If Google is reachable directly you can switch the shim off with `AG_EGRESS=0` (Windows: `set "AG_EGRESS=0" && bridge\start.cmd`, otherwise `AG_EGRESS=0 ./start.sh`).
+If Google is directly reachable from your network, disable the shim with `AG_EGRESS=0` (Windows: `set "AG_EGRESS=0" && bridge\start.cmd`, macOS/Linux: `AG_EGRESS=0 ./start.sh`).
 
 | Mode | What it does |
 | --- | --- |
-| `DNS` | goes through a smart-DNS relay, SNI and certificate stay Google's |
-| `Proxy` | CONNECT via `host:port`, `http://`, `socks5://` or `socks5h://` |
-| `VPN` | changes nothing, only checks that the tunnel is up |
-| `Direct` | no relays |
+| `DNS` | Routes only `*.googleapis.com` through a smart-DNS relay while verifying Google's real TLS certificate end-to-end |
+| `Proxy` | Connects via your `http://`, `socks5://`, or `socks5h://` proxy |
+| `VPN` | Leaves routing untouched and only monitors whether your system VPN tunnel is up |
+| `Direct` | Direct connection with no relays or proxies |
 
-## More
+## Documentation
 
 - [How it works](docs/how-it-works.md) — streaming, account rotation, watchdog, egress modes, images, limitations
-- [Configuration and tests](docs/configuration.md) — every environment variable
-- [Step-by-step install](docs/plugin-install.md), [transports](docs/transports.md), [quotas](docs/quotas.md), [images](docs/images.md), [security](docs/security.md)
+- [Configuration and tests](docs/configuration.md) — all environment variables and test commands
+- [Manual install](docs/plugin-install.md) · [Transports](docs/transports.md) · [Quotas](docs/quotas.md) · [Images](docs/images.md) · [Security](docs/security.md)
 - Plugins: [quota-overlay](plugins/quota-overlay/README.md) · [web-search](plugins/web-search/README.md) · [lean-context](plugins/lean-context/README.md)
 
-## The honest short version
+## Good to know
 
-Cloud Code is an unofficial transport; Google can change it without notice. Relays are someone else's infrastructure: they see the SNI and the volume, not the TLS content. Speed is set by the model, not the route. Your account, your risk, your subscription. The rest is in the [limitations](docs/how-it-works.md#honest-limitations).
+Cloud Code is an unofficial transport and Google may change it without notice. Public smart-DNS relays see the target hostname (SNI) and traffic volume, never the encrypted TLS payload. Generation speed is bounded by the model itself, not the route. Your account, your risk, your subscription — see [limitations](docs/how-it-works.md#honest-limitations).
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The project is not affiliated with Google; Gemini and Antigravity belong to Google, and their code is not distributed here.
+MIT — see [LICENSE](LICENSE). Not affiliated with Google; Gemini and Antigravity belong to Google, and none of their code is distributed here.
