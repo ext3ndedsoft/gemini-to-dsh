@@ -1,51 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-label="gemini-to-dsh — Gemini and Google Search inside DeepSeek Harness">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#07080b"/>
-      <stop offset="0.55" stop-color="#0a0b10"/>
-      <stop offset="1" stop-color="#080a0e"/>
+      <stop offset="0" stop-color="#06070a"/>
+      <stop offset="0.5" stop-color="#090b10"/>
+      <stop offset="1" stop-color="#07090d"/>
     </linearGradient>
-    <radialGradient id="glowLeft" cx="0.14" cy="0.18" r="0.52">
-      <stop offset="0" stop-color="#34d399" stop-opacity="0.14"/>
-      <stop offset="0.55" stop-color="#38bdf8" stop-opacity="0.05"/>
-      <stop offset="1" stop-color="#07080b" stop-opacity="0"/>
+    <radialGradient id="ambLeft" cx="0.12" cy="0.15" r="0.55">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0.13"/>
+      <stop offset="0.5" stop-color="#34d399" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#06070a" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="glowRight" cx="0.86" cy="0.78" r="0.48">
-      <stop offset="0" stop-color="#34d399" stop-opacity="0.16"/>
-      <stop offset="0.5" stop-color="#60a5fa" stop-opacity="0.06"/>
-      <stop offset="1" stop-color="#07080b" stop-opacity="0"/>
+    <radialGradient id="ambRight" cx="0.84" cy="0.62" r="0.52">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0.15"/>
+      <stop offset="0.45" stop-color="#6366f1" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#06070a" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="glowTopRight" cx="0.82" cy="0.12" r="0.38">
+    <radialGradient id="ambTop" cx="0.68" cy="0.0" r="0.45">
       <stop offset="0" stop-color="#a78bfa" stop-opacity="0.10"/>
-      <stop offset="1" stop-color="#07080b" stop-opacity="0"/>
+      <stop offset="1" stop-color="#06070a" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="arcGrad1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#38bdf8" stop-opacity="0.18"/>
+      <stop offset="0.75" stop-color="#34d399" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#34d399" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="arcGrad2" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#a78bfa" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </linearGradient>
     <linearGradient id="wordmark" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.65" stop-color="#e5e7eb"/>
-      <stop offset="1" stop-color="#9ca3af"/>
+      <stop offset="0.68" stop-color="#e2e8f0"/>
+      <stop offset="1" stop-color="#94a3b8"/>
     </linearGradient>
-    <linearGradient id="cardFill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#14161d" stop-opacity="0.96"/>
-      <stop offset="1" stop-color="#0d0f14" stop-opacity="0.96"/>
+    <linearGradient id="starGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.55" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#a78bfa"/>
     </linearGradient>
-    <linearGradient id="cardHighlight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
-      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.06"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0.12"/>
+    <linearGradient id="bentoFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#13161f" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0c0e14" stop-opacity="0.95"/>
     </linearGradient>
-    <linearGradient id="wireSub" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#a78bfa"/>
-      <stop offset="1" stop-color="#34d399"/>
+    <linearGradient id="panelFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#151822" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#0d0f16" stop-opacity="0.98"/>
     </linearGradient>
-    <filter id="cardShadow" x="-15%" y="-20%" width="130%" height="150%">
+    <linearGradient id="topRim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="traceBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#34d399" stop-opacity="0.85"/>
+    </linearGradient>
+    <linearGradient id="traceViolet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34d399" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0.85"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-18%" width="124%" height="145%">
       <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
-    </filter>
-    <filter id="emeraldGlow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="3.5" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
     </filter>
     <clipPath id="frameClip">
       <rect x="0" y="0" width="1200" height="340" rx="18"/>
@@ -54,122 +71,145 @@
 
   <g clip-path="url(#frameClip)">
     <rect width="1200" height="340" fill="url(#bg)"/>
-    <rect width="1200" height="340" fill="url(#glowLeft)"/>
-    <rect width="1200" height="340" fill="url(#glowRight)"/>
-    <rect width="1200" height="340" fill="url(#glowTopRight)"/>
+    <rect width="1200" height="340" fill="url(#ambLeft)"/>
+    <rect width="1200" height="340" fill="url(#ambRight)"/>
+    <rect width="1200" height="340" fill="url(#ambTop)"/>
 
-    <line x1="656" y1="28" x2="656" y2="312" stroke="#ffffff" stroke-opacity="0.06" stroke-width="1"/>
+    <path d="M -40 290 C 260 210, 520 330, 860 170 C 1020 95, 1140 110, 1240 60" fill="none" stroke="url(#arcGrad1)" stroke-width="1.5"/>
+    <path d="M 420 -20 C 580 120, 780 40, 1220 240" fill="none" stroke="url(#arcGrad2)" stroke-width="1.2"/>
+    <circle cx="960" cy="170" r="210" fill="none" stroke="#ffffff" stroke-opacity="0.025" stroke-width="1"/>
+    <circle cx="960" cy="170" r="290" fill="none" stroke="#ffffff" stroke-opacity="0.018" stroke-width="1"/>
 
     <!-- LEFT COLUMN -->
-    <g transform="translate(52 38)">
-      <rect width="332" height="28" rx="14" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.11"/>
-      <circle cx="16" cy="14" r="4" fill="#34d399" filter="url(#emeraldGlow)"/>
-      <text x="29" y="18" font-family="Consolas,'Cascadia Mono',SFMono-Regular,Menlo,monospace" font-size="11" font-weight="600" letter-spacing="0.6" fill="#d1d5db">ANTIGRAVITY 2.34.0 · ZERO DEPS · NODE 20+</text>
+    <g transform="translate(48 28)">
+      <rect width="326" height="26" rx="13" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.11"/>
+      <circle cx="15" cy="13" r="3.5" fill="#34d399"/>
+      <text x="27" y="17" font-family="Consolas,'Cascadia Mono',SFMono-Regular,Menlo,monospace" font-size="10.5" font-weight="600" letter-spacing="0.7" fill="#cbd5e1">ANTIGRAVITY 2.34.0 · ZERO DEPS · NODE 20+</text>
     </g>
 
-    <g transform="translate(50 126)">
-      <text x="0" y="0" font-family="'Segoe UI Variable Display','Segoe UI',Inter,system-ui,sans-serif" font-size="72" font-weight="750" letter-spacing="-2.8" fill="url(#wordmark)">gemini</text>
-      <g transform="translate(244 -24)" filter="url(#emeraldGlow)">
-        <line x1="0" y1="0" x2="42" y2="0" stroke="#34d399" stroke-width="4.5" stroke-linecap="round"/>
-        <path d="M 30 -11 L 43 0 L 30 11" fill="none" stroke="#34d399" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(46 110)">
+      <text x="0" y="0" font-family="'Segoe UI Variable Display','Segoe UI',Inter,system-ui,sans-serif" font-size="66" font-weight="750" letter-spacing="-2.6" fill="url(#wordmark)">gemini</text>
+      <g transform="translate(244 -22)">
+        <circle cx="0" cy="0" r="19" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.12"/>
+        <path d="M 0 -12 C 1.2 -3.2 3.2 -1.2 12 0 C 3.2 1.2 1.2 3.2 0 12 C -1.2 3.2 -3.2 1.2 -12 0 C -3.2 -1.2 -1.2 -3.2 0 -12 Z" fill="url(#starGrad)"/>
       </g>
-      <text x="302" y="0" font-family="'Segoe UI Variable Display','Segoe UI',Inter,system-ui,sans-serif" font-size="72" font-weight="750" letter-spacing="-2.8" fill="url(#wordmark)">dsh</text>
+      <text x="278" y="0" font-family="'Segoe UI Variable Display','Segoe UI',Inter,system-ui,sans-serif" font-size="66" font-weight="750" letter-spacing="-2.6" fill="url(#wordmark)">dsh</text>
     </g>
 
-    <text x="54" y="168" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="17" font-weight="400" fill="#9ca3af">
-      Gemini 3.x / 4 and Google Search in DSH — no system-wide VPN
+    <text x="48" y="146" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="16" font-weight="400" fill="#94a3b8">
+      Gemini 3.x / 4 and live Google Search in DeepSeek Harness — no system-wide VPN
     </text>
 
-    <g font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="12.5" font-weight="500">
-      <g transform="translate(54 202)">
-        <rect width="268" height="42" rx="12" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.10"/>
-        <circle cx="22" cy="21" r="11" fill="#34d399" fill-opacity="0.12"/>
-        <circle cx="22" cy="21" r="6.5" fill="none" stroke="#34d399" stroke-opacity="0.28" stroke-width="2"/>
-        <path d="M 22 14.5 A 6.5 6.5 0 1 1 16.2 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round"/>
-        <text x="42" y="25.5" fill="#f3f4f6">Account rotation &amp; 5h / 7d quota</text>
+    <!-- 2x2 Bento Feature Cards -->
+    <g font-family="'Segoe UI',Inter,system-ui,sans-serif">
+      <g transform="translate(48 174)" filter="url(#shadow)">
+        <rect width="282" height="62" rx="13" fill="url(#bentoFill)" stroke="#ffffff" stroke-opacity="0.09"/>
+        <line x1="16" y1="0.5" x2="266" y2="0.5" stroke="url(#topRim)"/>
+        <rect x="13" y="15" width="32" height="32" rx="9" fill="#34d399" fill-opacity="0.12" stroke="#34d399" stroke-opacity="0.28"/>
+        <circle cx="29" cy="31" r="7.5" fill="none" stroke="#34d399" stroke-opacity="0.25" stroke-width="2.2"/>
+        <path d="M 29 23.5 A 7.5 7.5 0 1 1 22.2 34.2" fill="none" stroke="#34d399" stroke-width="2.2" stroke-linecap="round"/>
+        <text x="56" y="28" font-size="13" font-weight="650" fill="#f8fafc">Smart rotation &amp; 5h / 7d</text>
+        <text x="56" y="45" font-size="11" fill="#94a3b8">Switches accounts before 429</text>
       </g>
 
-      <g transform="translate(334 202)">
-        <rect width="268" height="42" rx="12" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.10"/>
-        <circle cx="22" cy="21" r="11" fill="#38bdf8" fill-opacity="0.12"/>
-        <circle cx="20.5" cy="19.5" r="5" fill="none" stroke="#38bdf8" stroke-width="1.8"/>
-        <line x1="24.2" y1="23.2" x2="27.5" y2="26.5" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round"/>
-        <text x="42" y="25.5" fill="#f3f4f6">Live Google Search grounding</text>
+      <g transform="translate(342 174)" filter="url(#shadow)">
+        <rect width="282" height="62" rx="13" fill="url(#bentoFill)" stroke="#ffffff" stroke-opacity="0.09"/>
+        <line x1="16" y1="0.5" x2="266" y2="0.5" stroke="url(#topRim)"/>
+        <rect x="13" y="15" width="32" height="32" rx="9" fill="#38bdf8" fill-opacity="0.12" stroke="#38bdf8" stroke-opacity="0.28"/>
+        <circle cx="27.5" cy="29.5" r="5.5" fill="none" stroke="#38bdf8" stroke-width="1.9"/>
+        <line x1="31.5" y1="33.5" x2="35.5" y2="37.5" stroke="#38bdf8" stroke-width="1.9" stroke-linecap="round"/>
+        <text x="56" y="28" font-size="13" font-weight="650" fill="#f8fafc">Google Search grounding</text>
+        <text x="56" y="45" font-size="11" fill="#94a3b8">Summary, links &amp; model picker</text>
       </g>
 
-      <g transform="translate(54 256)">
-        <rect width="268" height="42" rx="12" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.10"/>
-        <circle cx="22" cy="21" r="11" fill="#a78bfa" fill-opacity="0.12"/>
-        <path d="M 22 14.5 L 27.5 17 V 21.5 C 27.5 24.8 25.1 27.1 22 28 C 18.9 27.1 16.5 24.8 16.5 21.5 V 17 Z" fill="none" stroke="#a78bfa" stroke-width="1.7" stroke-linejoin="round"/>
-        <text x="42" y="25.5" fill="#f3f4f6">Egress: DNS · Proxy · VPN · Direct</text>
+      <g transform="translate(48 248)" filter="url(#shadow)">
+        <rect width="282" height="62" rx="13" fill="url(#bentoFill)" stroke="#ffffff" stroke-opacity="0.09"/>
+        <line x1="16" y1="0.5" x2="266" y2="0.5" stroke="url(#topRim)"/>
+        <rect x="13" y="15" width="32" height="32" rx="9" fill="#a78bfa" fill-opacity="0.12" stroke="#a78bfa" stroke-opacity="0.28"/>
+        <path d="M 29 23 L 35.5 25.8 V 31 C 35.5 35 32.7 37.8 29 39 C 25.3 37.8 22.5 35 22.5 31 V 25.8 Z" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linejoin="round"/>
+        <text x="56" y="28" font-size="13" font-weight="650" fill="#f8fafc">Scoped network egress</text>
+        <text x="56" y="45" font-size="11" fill="#94a3b8">DNS · Proxy · VPN for googleapis</text>
       </g>
 
-      <g transform="translate(334 256)">
-        <rect width="268" height="42" rx="12" fill="#ffffff" fill-opacity="0.035" stroke="#ffffff" stroke-opacity="0.10"/>
-        <circle cx="22" cy="21" r="11" fill="#fbbf24" fill-opacity="0.12"/>
-        <path d="M 23 14.5 L 17.5 22 H 22 L 21 27.5 L 26.5 20 H 22 Z" fill="none" stroke="#fbbf24" stroke-width="1.7" stroke-linejoin="round"/>
-        <text x="42" y="25.5" fill="#f3f4f6">KV-cache keep-alive &amp; auto-resume</text>
+      <g transform="translate(342 248)" filter="url(#shadow)">
+        <rect width="282" height="62" rx="13" fill="url(#bentoFill)" stroke="#ffffff" stroke-opacity="0.09"/>
+        <line x1="16" y1="0.5" x2="266" y2="0.5" stroke="url(#topRim)"/>
+        <rect x="13" y="15" width="32" height="32" rx="9" fill="#fbbf24" fill-opacity="0.12" stroke="#fbbf24" stroke-opacity="0.28"/>
+        <path d="M 30 23 L 24 32 H 29 L 28 39 L 34 30 H 29 Z" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-linejoin="round"/>
+        <text x="56" y="28" font-size="13" font-weight="650" fill="#f8fafc">Fast stream &amp; cache</text>
+        <text x="56" y="45" font-size="11" fill="#94a3b8">KV keep-alive &amp; auto-resume</text>
       </g>
     </g>
 
     <!-- RIGHT COLUMN -->
     <g fill="none">
-      <path d="M 812 92 V 122" stroke="#60a5fa" stroke-width="2" stroke-opacity="0.75"/>
-      <circle cx="812" cy="107" r="3" fill="#60a5fa"/>
-      <path d="M 794 196 V 228" stroke="#a78bfa" stroke-width="1.8" stroke-opacity="0.7" stroke-dasharray="4 3"/>
-      <circle cx="794" cy="212" r="2.8" fill="#a78bfa"/>
-      <path d="M 1034 196 V 228" stroke="#34d399" stroke-width="2.2" stroke-opacity="0.85"/>
-      <circle cx="1034" cy="212" r="3" fill="#34d399" filter="url(#emeraldGlow)"/>
-      <path d="M 896 267 H 918" stroke="url(#wireSub)" stroke-width="1.8" stroke-opacity="0.75"/>
+      <path d="M 810 86 C 810 102, 810 104, 810 116" stroke="url(#traceBlue)" stroke-width="2"/>
+      <circle cx="810" cy="101" r="3" fill="#60a5fa"/>
+      <path d="M 790 206 C 790 220, 776 222, 776 236" stroke="url(#traceViolet)" stroke-width="1.8" stroke-dasharray="4 3"/>
+      <circle cx="783" cy="221" r="2.8" fill="#a78bfa"/>
+      <path d="M 1036 206 C 1036 220, 1042 222, 1042 236" stroke="#34d399" stroke-width="2.2" stroke-opacity="0.85"/>
+      <circle cx="1039" cy="221" r="3" fill="#34d399"/>
+      <path d="M 892 273 H 916" stroke="#34d399" stroke-width="1.6" stroke-opacity="0.55"/>
     </g>
 
-    <g transform="translate(692 34)" filter="url(#cardShadow)">
-      <rect width="460" height="58" rx="14" fill="url(#cardFill)" stroke="url(#cardHighlight)"/>
-      <rect x="14" y="14" width="30" height="30" rx="9" fill="#60a5fa" fill-opacity="0.14" stroke="#60a5fa" stroke-opacity="0.35"/>
+    <g transform="translate(668 28)" filter="url(#shadow)">
+      <rect width="484" height="58" rx="14" fill="url(#panelFill)" stroke="#ffffff" stroke-opacity="0.10"/>
+      <line x1="18" y1="0.5" x2="466" y2="0.5" stroke="url(#topRim)"/>
+      <rect x="14" y="14" width="30" height="30" rx="9" fill="#60a5fa" fill-opacity="0.14" stroke="#60a5fa" stroke-opacity="0.32"/>
       <path d="M 23 25 L 27 29 L 23 33 M 29 33 H 35" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="56" y="26" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13.5" font-weight="650" fill="#f3f4f6">DSH or any OpenAI client</text>
+      <text x="56" y="26" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13.5" font-weight="650" fill="#f8fafc">DSH or any OpenAI client</text>
       <text x="56" y="44" font-family="Consolas,'Cascadia Mono',monospace" font-size="11" fill="#8b92a5">POST /v1/chat/completions · /v1/search</text>
-      <rect x="378" y="18" width="68" height="22" rx="11" fill="#60a5fa" fill-opacity="0.12" stroke="#60a5fa" stroke-opacity="0.3"/>
-      <text x="412" y="32.5" text-anchor="middle" font-family="Consolas,'Cascadia Mono',monospace" font-size="10" font-weight="600" fill="#93c5fd">OpenAI</text>
+      <rect x="402" y="18" width="68" height="22" rx="11" fill="#60a5fa" fill-opacity="0.12" stroke="#60a5fa" stroke-opacity="0.3"/>
+      <text x="436" y="32.5" text-anchor="middle" font-family="Consolas,'Cascadia Mono',monospace" font-size="10" font-weight="600" fill="#93c5fd">OpenAI</text>
     </g>
 
-    <g transform="translate(692 122)" filter="url(#cardShadow)">
-      <rect width="460" height="74" rx="14" fill="url(#cardFill)" stroke="url(#cardHighlight)"/>
-      <rect x="14" y="14" width="30" height="30" rx="9" fill="#34d399" fill-opacity="0.14" stroke="#34d399" stroke-opacity="0.35"/>
-      <text x="29" y="34" text-anchor="middle" font-family="'Segoe UI',Inter,sans-serif" font-size="14" font-weight="750" fill="#34d399">A</text>
-      <text x="56" y="26" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13.5" font-weight="650" fill="#f3f4f6">Local bridge</text>
-      <text x="148" y="26" font-family="Consolas,'Cascadia Mono',monospace" font-size="11.5" fill="#9ca3af">127.0.0.1:8787</text>
-      <g transform="translate(56 38)" font-family="Consolas,'Cascadia Mono',monospace" font-size="10">
-        <rect width="112" height="22" rx="6" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
-        <text x="56" y="14.5" text-anchor="middle" fill="#d1d5db">Antigravity 2.34</text>
-        <rect x="120" width="84" height="22" rx="6" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
-        <text x="162" y="14.5" text-anchor="middle" fill="#d1d5db">5h Guard</text>
-        <rect x="212" width="92" height="22" rx="6" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.09"/>
-        <text x="258" y="14.5" text-anchor="middle" fill="#d1d5db">KV Keep-Alive</text>
-        <rect x="312" width="76" height="22" rx="6" fill="#38bdf8" fill-opacity="0.10" stroke="#38bdf8" stroke-opacity="0.28"/>
-        <text x="350" y="14.5" text-anchor="middle" fill="#7dd3fc">Search</text>
+    <g transform="translate(668 116)" filter="url(#shadow)">
+      <rect width="484" height="90" rx="14" fill="url(#panelFill)" stroke="#ffffff" stroke-opacity="0.12"/>
+      <line x1="18" y1="0.5" x2="466" y2="0.5" stroke="url(#topRim)"/>
+      <rect x="14" y="14" width="30" height="30" rx="9" fill="#f8fafc"/>
+      <text x="29" y="34" text-anchor="middle" font-family="'Segoe UI',Inter,sans-serif" font-size="14" font-weight="800" fill="#090b10">A</text>
+      <text x="56" y="26" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13.5" font-weight="650" fill="#f8fafc">Local bridge</text>
+      <text x="148" y="26" font-family="Consolas,'Cascadia Mono',monospace" font-size="11.5" fill="#94a3b8">127.0.0.1:8787</text>
+      <rect x="344" y="15" width="126" height="22" rx="11" fill="#34d399" fill-opacity="0.10" stroke="#34d399" stroke-opacity="0.28"/>
+      <circle cx="357" cy="26" r="3" fill="#34d399"/>
+      <text x="366" y="29.5" font-family="Consolas,'Cascadia Mono',monospace" font-size="10" font-weight="600" fill="#6ee7b7">Antigravity 2.34</text>
+
+      <g transform="translate(14 54)" font-family="Consolas,'Cascadia Mono',monospace" font-size="10">
+        <rect width="108" height="24" rx="7" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+        <text x="54" y="15.5" text-anchor="middle" fill="#e2e8f0">5h Guard · 5%</text>
+
+        <rect x="116" width="112" height="24" rx="7" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+        <text x="172" y="15.5" text-anchor="middle" fill="#e2e8f0">KV Keep-Alive</text>
+
+        <rect x="236" width="112" height="24" rx="7" fill="#38bdf8" fill-opacity="0.09" stroke="#38bdf8" stroke-opacity="0.25"/>
+        <text x="292" y="15.5" text-anchor="middle" fill="#7dd3fc">3.5-flash-lite</text>
+
+        <rect x="356" width="100" height="24" rx="7" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/>
+        <text x="406" y="15.5" text-anchor="middle" fill="#cbd5e1">140 tok/s</text>
       </g>
     </g>
 
-    <g transform="translate(692 228)" filter="url(#cardShadow)">
-      <rect width="204" height="78" rx="14" fill="url(#cardFill)" stroke="url(#cardHighlight)"/>
-      <circle cx="24" cy="24" r="5" fill="#a78bfa"/>
-      <text x="37" y="28" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13" font-weight="650" fill="#f3f4f6">Egress shim</text>
-      <text x="18" y="47" font-family="Consolas,'Cascadia Mono',monospace" font-size="10.5" fill="#8b92a5">127.0.0.1:8789</text>
-      <text x="18" y="64" font-family="Consolas,'Cascadia Mono',monospace" font-size="10" fill="#a78bfa">*.googleapis.com only</text>
+    <g transform="translate(668 236)" filter="url(#shadow)">
+      <rect width="224" height="74" rx="14" fill="url(#panelFill)" stroke="#ffffff" stroke-opacity="0.10"/>
+      <line x1="16" y1="0.5" x2="208" y2="0.5" stroke="url(#topRim)"/>
+      <circle cx="22" cy="23" r="4.5" fill="#a78bfa"/>
+      <text x="35" y="27" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13" font-weight="650" fill="#f8fafc">Egress shim</text>
+      <text x="16" y="45" font-family="Consolas,'Cascadia Mono',monospace" font-size="10.5" fill="#94a3b8">127.0.0.1:8789 · DNS</text>
+      <text x="16" y="61" font-family="Consolas,'Cascadia Mono',monospace" font-size="10" fill="#c4b5fd">*.googleapis.com only</text>
     </g>
 
-    <g transform="translate(918 228)" filter="url(#cardShadow)">
-      <rect width="234" height="78" rx="14" fill="url(#cardFill)" stroke="#34d399" stroke-opacity="0.32"/>
-      <g transform="translate(16 17)">
+    <g transform="translate(916 236)" filter="url(#shadow)">
+      <rect width="236" height="74" rx="14" fill="url(#panelFill)" stroke="#34d399" stroke-opacity="0.30"/>
+      <line x1="16" y1="0.5" x2="220" y2="0.5" stroke="url(#topRim)"/>
+      <g transform="translate(15 15)">
         <circle cx="22" cy="22" r="18" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="3.5"/>
         <circle cx="22" cy="22" r="18" fill="none" stroke="#34d399" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="113.1" stroke-dashoffset="14" transform="rotate(-90 22 22)"/>
-        <text x="22" y="26" text-anchor="middle" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#f3f4f6">88%</text>
+        <text x="22" y="26" text-anchor="middle" font-family="'Segoe UI',Inter,sans-serif" font-size="11" font-weight="700" fill="#f8fafc">88%</text>
       </g>
-      <text x="72" y="29" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13" font-weight="650" fill="#f3f4f6">Google Cloud Code</text>
-      <text x="72" y="47" font-family="Consolas,'Cascadia Mono',monospace" font-size="10.5" fill="#9ca3af">Gemini 4 · 3.8 · Search</text>
-      <rect x="72" y="54" width="74" height="16" rx="8" fill="#34d399" fill-opacity="0.14"/>
-      <text x="109" y="65" text-anchor="middle" font-family="Consolas,'Cascadia Mono',monospace" font-size="9.5" font-weight="600" fill="#34d399">200 OK</text>
+      <text x="70" y="27" font-family="'Segoe UI',Inter,system-ui,sans-serif" font-size="13" font-weight="650" fill="#f8fafc">Google Cloud Code</text>
+      <text x="70" y="44" font-family="Consolas,'Cascadia Mono',monospace" font-size="10.5" fill="#94a3b8">Gemini 4 · 3.8 · Search</text>
+      <rect x="70" y="51" width="72" height="16" rx="8" fill="#34d399" fill-opacity="0.14"/>
+      <text x="106" y="62" text-anchor="middle" font-family="Consolas,'Cascadia Mono',monospace" font-size="9.5" font-weight="600" fill="#34d399">200 OK</text>
     </g>
 
     <rect x="0.5" y="0.5" width="1199" height="339" rx="18" fill="none" stroke="#ffffff" stroke-opacity="0.09"/>

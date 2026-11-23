@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.en.svg?v=6" alt="gemini→dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
+  <img src="assets/banner.en.svg?v=7" alt="gemini→dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
