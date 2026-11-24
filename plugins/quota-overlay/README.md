@@ -4,9 +4,9 @@ A quota panel for the DSH shell: every account, both Google windows, and the tra
 in one card in the corner. No chat commands; every action is a button.
 
 <p align="center">
-  <img src="../../assets/panel-accounts.png?v=12" alt="quota panel, Accounts tab" width="275">
-  <img src="../../assets/panel-route.png?v=12" alt="quota panel, Route tab" width="275">
-  <img src="../../assets/panel-settings.png?v=12" alt="quota panel, Settings tab" width="275">
+  <img src="../../assets/panel-accounts.png?v=12" alt="quota panel, Accounts tab" width="240">
+  <img src="../../assets/panel-route.png?v=12" alt="quota panel, Route tab" width="240">
+  <img src="../../assets/panel-settings.png?v=12" alt="quota panel, Settings tab" width="240">
 </p>
 
 ## What it shows
