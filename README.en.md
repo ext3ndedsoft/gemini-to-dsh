@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.en.png?v=10" alt="gemini-to-dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
+  <img src="assets/banner.en.png?v=11" alt="gemini-to-dsh — Gemini and Google Search inside DeepSeek Harness" width="100%">
 </p>
 
 <p align="center">
@@ -21,9 +21,9 @@
 - **Corner overlay panel** — shows per-window and per-model quotas, response latency, active egress route, and the `web-search` model selector.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=10" alt="Quota and egress panel: DNS mode" width="360">
+  <img src="assets/panel-dns.png?v=11" alt="Quota and egress panel: DNS mode" width="360">
   &nbsp;&nbsp;
-  <img src="assets/panel-proxy.png?v=10" alt="Quota and egress panel: Proxy mode" width="360">
+  <img src="assets/panel-proxy.png?v=11" alt="Quota and egress panel: Proxy mode" width="360">
 </p>
 
 ## Quick install
