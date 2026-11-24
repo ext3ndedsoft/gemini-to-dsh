@@ -25,6 +25,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 
 import {
+  accountModels,
   clearCooldowns,
   cloudPost,
   completeLogin,
@@ -32,6 +33,7 @@ import {
   listAccounts,
   loadStore,
   orderedAccounts,
+  primaryAccount,
   recordLatency,
   removeAccount,
   searchConfigReport,
@@ -288,6 +290,8 @@ async function handleAccountRoutes(req, res, url) {
       return sendJson(res, 200, { ok: true });
     }
     if (req.method === 'GET' && url.pathname === '/search/config') {
+      const active = primaryAccount();
+      if (active) await accountModels(active).catch(() => null);
       return sendJson(res, 200, searchConfigReport());
     }
     if (req.method === 'POST' && url.pathname === '/search/model') {

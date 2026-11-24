@@ -21,9 +21,11 @@
 - **Corner overlay panel** — shows per-window and per-model quotas, response latency, active egress route, and the `web-search` model selector.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=11" alt="Quota and egress panel: DNS mode" width="360">
-  &nbsp;&nbsp;
-  <img src="assets/panel-proxy.png?v=11" alt="Quota and egress panel: Proxy mode" width="360">
+  <img src="assets/panel-accounts.png?v=12" alt="Quota and egress panel: Accounts tab" width="275">
+  &nbsp;
+  <img src="assets/panel-route.png?v=12" alt="Quota and egress panel: Route tab" width="275">
+  &nbsp;
+  <img src="assets/panel-settings.png?v=12" alt="Quota and egress panel: Settings tab" width="275">
 </p>
 
 ## Quick install

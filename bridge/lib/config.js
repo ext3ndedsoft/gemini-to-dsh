@@ -31,6 +31,22 @@ export const SEARCH_MODELS = [
   'gemini-3-flash',
   'gemini-3.8-flash-tiered',
 ];
+export const SEARCH_GEMINI4_MODELS = [
+  {
+    id: 'gemini-4-hydrogen-sonar',
+    match: /^gemini-4-hydrogen-sonar$/,
+  },
+  {
+    id: 'gemini-4-neon',
+    match: /^gemini-4-neon-(?:low|medium|high|xhigh)$/,
+    tiers: ['gemini-4-neon-low', 'gemini-4-neon-medium', 'gemini-4-neon-high', 'gemini-4-neon-xhigh'],
+  },
+  {
+    id: 'gemini-4-carbon',
+    match: /^gemini-4-carbon-(?:low|medium|high|xhigh)$/,
+    tiers: ['gemini-4-carbon-low', 'gemini-4-carbon-medium', 'gemini-4-carbon-high'],
+  },
+];
 export const DEFAULT_PROJECT = 'aicode-consumers';
 
 export const SIGNATURE_FILE =
@@ -84,6 +100,11 @@ const EFFORT_FAMILIES = {
     levels: { off: 'low', none: 'low', minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', extra: 'high', max: 'high' },
     fallback: 'medium',
   },
+  'gemini-4-carbon': {
+    base: 'gemini-4-carbon',
+    levels: { off: 'low', none: 'low', minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'high', extra: 'high', max: 'high' },
+    fallback: 'high',
+  },
   'gemini-4-hydrogen': {
     base: 'gemini-4-hydrogen',
     levels: { off: 'low', none: 'low', minimal: 'low', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', extra: 'xhigh', max: 'xhigh' },
@@ -104,6 +125,7 @@ const EFFORT_FAMILIES = {
 export const VIRTUAL_MODELS = [
   ['gemini-4-neon', 'gemini-4-neon-high'],
   ['gemini-4-argon', 'gemini-4-argon-medium'],
+  ['gemini-4-carbon', 'gemini-4-carbon-high'],
   ['gemini-4-hydrogen', 'gemini-4-hydrogen-medium'],
 ];
 

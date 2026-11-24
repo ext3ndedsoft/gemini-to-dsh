@@ -348,6 +348,10 @@ await test('Gemini 4 family names resolve by reasoning_effort', async () => {
   assert.equal(resolveModel('gemini-4-neon', { effort: 'xhigh' }), 'gemini-4-neon-xhigh');
   assert.equal(resolveModel('gemini-4-neon', { effort: 'low' }), 'gemini-4-neon-low');
   assert.equal(resolveModel('gemini-4-argon', { effort: 'xhigh' }), 'gemini-4-argon-high');
+  assert.equal(resolveModel('gemini-4-carbon', { effort: 'low' }), 'gemini-4-carbon-low');
+  assert.equal(resolveModel('gemini-4-carbon', { effort: 'medium' }), 'gemini-4-carbon-medium');
+  assert.equal(resolveModel('gemini-4-carbon', { effort: 'extra' }), 'gemini-4-carbon-high');
+  assert.equal(resolveModel('gemini-4-carbon', {}), 'gemini-4-carbon-high');
   assert.equal(resolveModel('gemini-4-hydrogen', { effort: 'high' }), 'gemini-4-hydrogen-high');
   assert.equal(resolveModel('claude-opus-5-5', { effort: 'medium' }), 'claude-opus-5-5-medium');
 });
@@ -404,6 +408,103 @@ await test('orderedAccounts skips accounts whose cached catalog lacks the reques
     const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
     const order = JSON.parse(stdout.trim().split('\n').pop());
     assert.deepEqual(order, ['acc_yes']);
+  } finally {
+    stub.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test('availableSearchModels follows active account Gemini 4 availability and excludes Argon', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-search-g4-'));
+  const file = path.join(dir, 'accounts.json');
+  const creds = path.join(dir, 'oauth_creds.json');
+  const egress = path.join(dir, 'egress.json');
+  const stub = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const auth = req.headers.authorization || '';
+      if (req.url.includes('loadCodeAssist')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ cloudaicompanionProject: 'p' }));
+      }
+      const isHub = auth.includes('tok_hub');
+      const base = {
+        'gemini-3.5-flash-lite': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-2.5-flash-lite': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-3.1-flash-lite': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-2.5-flash': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-3-flash': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-3.8-flash-tiered': { quotaInfo: { remainingFraction: 1 } },
+        'gemini-4-hydrogen-sonar': { quotaInfo: { remainingFraction: 1 } },
+      };
+      const models = isHub
+        ? {
+            ...base,
+            'gemini-4-hydrogen-low': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-hydrogen-high': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-neon-low': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-neon-high': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-carbon-low': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-carbon-high': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-argon-low': { quotaInfo: { remainingFraction: 1 } },
+            'gemini-4-argon-medium': { quotaInfo: { remainingFraction: 1 } },
+          }
+        : {
+            ...base,
+            'gemini-4-neon-disabled': {},
+            'gemini-4-carbon-disabled': {},
+            'gemini-4-argon-disabled': {},
+            'gemini-4-hydrogen-disabled': {},
+          };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ models, webSearchModelIds: ['gemini-3.5-flash-lite'] }));
+    });
+  });
+  const port = await listen(stub);
+  fs.writeFileSync(egress, JSON.stringify({ enabled: false, relay: `http://127.0.0.1:${port}` }));
+  fs.writeFileSync(creds, JSON.stringify({ access_token: 'tok_jio', refresh_token: 'r', expiry_date: Date.now() + 3600e3 }));
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      accounts: [
+        { id: 'acc_jio', email: 'jio@example.com', access_token: 'tok_jio', refresh_token: 'r', expiry_date: Date.now() + 3600e3 },
+        { id: 'acc_hub', email: 'hub@example.com', access_token: 'tok_hub', refresh_token: 'r', expiry_date: Date.now() + 3600e3 },
+      ],
+      pinned: 'acc_jio',
+    }),
+  );
+  const script = `
+    process.env.AG_ACCOUNTS_FILE = ${JSON.stringify(file)};
+    process.env.AG_CREDS_FILE = ${JSON.stringify(creds)};
+    process.env.AG_EGRESS_FILE = ${JSON.stringify(egress)};
+    const mod = await import(${JSON.stringify(pathToFileURL(path.join(root, 'accounts.js')).href)});
+    const s = mod.loadStore();
+    for (const acc of s.accounts) await mod.accountModels(acc, { force: true });
+    const jioModels = mod.availableSearchModels();
+    mod.setPinned('acc_hub');
+    const hubModels = mod.availableSearchModels();
+    const resolvedNeon = mod.resolveSearchModel('gemini-4-neon');
+    const resolvedCarbon = mod.resolveSearchModel('gemini-4-carbon');
+    const resolvedHydrogen = mod.resolveSearchModel('gemini-4-hydrogen-sonar');
+    console.log(JSON.stringify({ jioModels, hubModels, resolvedNeon, resolvedCarbon, resolvedHydrogen }));
+  `;
+  try {
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
+    const out = JSON.parse(stdout.trim().split('\n').pop());
+    assert.ok(out.jioModels.includes('gemini-4-hydrogen-sonar'));
+    assert.ok(!out.jioModels.includes('gemini-4-neon'));
+    assert.ok(!out.jioModels.includes('gemini-4-carbon'));
+    assert.ok(!out.jioModels.some((id) => id.includes('argon')));
+    assert.ok(out.hubModels.includes('gemini-4-hydrogen-sonar'));
+    assert.ok(out.hubModels.includes('gemini-4-neon'));
+    assert.ok(out.hubModels.includes('gemini-4-carbon'));
+    assert.ok(!out.hubModels.includes('gemini-4-hydrogen-low'));
+    assert.ok(!out.hubModels.includes('gemini-4-hydrogen-high'));
+    assert.ok(!out.hubModels.some((id) => id.includes('argon')));
+    assert.equal(out.resolvedNeon, 'gemini-4-neon-low');
+    assert.equal(out.resolvedCarbon, 'gemini-4-carbon-low');
+    assert.equal(out.resolvedHydrogen, 'gemini-4-hydrogen-sonar');
   } finally {
     stub.close();
     fs.rmSync(dir, { recursive: true, force: true });

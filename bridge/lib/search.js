@@ -19,6 +19,7 @@ import {
   orderedAccounts,
   recommendedSearchModel,
   recordLatency,
+  resolveSearchModel,
   searchModelOf,
 } from '../accounts.js';
 import {
@@ -29,7 +30,7 @@ import {
 } from './config.js';
 import { errorStatus, resetHint, upstreamErrorText } from './http.js';
 
-const SEARCH_TIMEOUT_MS = Number(process.env.AG_SEARCH_TIMEOUT_MS || 25_000);
+const SEARCH_TIMEOUT_MS = Number(process.env.AG_SEARCH_TIMEOUT_MS || 45_000);
 const REDIRECT_TIMEOUT_MS = Number(process.env.AG_SEARCH_REDIRECT_MS || 2_500);
 const REDIRECT_HOST = /^https:\/\/vertexaisearch\.cloud\.google\.com\/grounding-api-redirect\//i;
 const PERMANENT_403 = /disabled in this account|violation of Terms of Service|Verify your account/i;
@@ -148,6 +149,7 @@ async function runSearchAttempt(targetModel, query, deadline, signal) {
     throw Object.assign(new Error('no Antigravity accounts configured'), { status: 401 });
   }
 
+  const isHeavyGemini4 = /^gemini-4-(?:neon|carbon)(?:-|$)/.test(targetModel);
   const payload = {
     project: DEFAULT_PROJECT,
     requestId: `web_search/${crypto.randomUUID()}`,
@@ -166,6 +168,7 @@ async function runSearchAttempt(targetModel, query, deadline, signal) {
         },
       ],
       tools: [{ googleSearch: {} }],
+      ...(isHeavyGemini4 ? { generationConfig: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } } : {}),
     },
   };
 
@@ -242,7 +245,8 @@ export async function searchWeb({ query, maxResults = 8, model } = {}, { signal,
   const deadline = startedAt + SEARCH_TIMEOUT_MS;
   const explicit = typeof model === 'string' && model.trim() && model.trim().toLowerCase() !== 'auto' ? model.trim() : '';
   const configured = searchModelOf();
-  let usedModel = explicit || configured || process.env.AG_SEARCH_MODEL || recommendedSearchModel() || DEFAULT_SEARCH_MODEL;
+  const requestedModel = explicit || configured || process.env.AG_SEARCH_MODEL || recommendedSearchModel() || DEFAULT_SEARCH_MODEL;
+  let usedModel = resolveSearchModel(requestedModel);
   let attempt = await runSearchAttempt(usedModel, q, deadline, signal);
 
   if (

@@ -4,19 +4,25 @@ A quota panel for the DSH shell: every account, both Google windows, and the tra
 in one card in the corner. No chat commands; every action is a button.
 
 <p align="center">
-  <img src="../../assets/panel-dns.png?v=11" alt="quota panel, DNS mode" width="360">
-  <img src="../../assets/panel-proxy.png?v=11" alt="quota panel, Proxy mode" width="360">
+  <img src="../../assets/panel-accounts.png?v=12" alt="quota panel, Accounts tab" width="275">
+  <img src="../../assets/panel-route.png?v=12" alt="quota panel, Route tab" width="275">
+  <img src="../../assets/panel-settings.png?v=12" alt="quota panel, Settings tab" width="275">
 </p>
 
 ## What it shows
 
+**Three tabs + summary strip.** Two summary cards at the top show the active/pinned account and
+the live egress route at a glance; three tabs underneath separate **Accounts**, **Route**, and
+**Settings**.
+
 **Weekly and five-hour, per group.** Google meters Cloud Code on two windows at once, and they
 fail differently: five hours is a short cut-off that slides forward, a week is a long one that
-does not. Each group the account has — `Gemini Models`, `Claude and GPT models` — gets a ring with
-the weekly percentage left, the reset countdown, and a small `5H` badge for the short window.
+does not. Each group the account has — `Gemini`, `Claude and GPT` — gets a compact card with the
+five-hour percentage, reset countdown, progress bar, and weekly percentage underneath.
 
-**Per model, underneath.** The five-hour number for the models you actually use, worst first.
-This is what answers "why did it just refuse" without opening a second window.
+**Per model, expandable.** Toggle `модели (N)` on any account card to inspect per-model five-hour
+quotas (including Gemini 4 and Claude 5.5). This is what answers "why did it just refuse" without
+opening a second window.
 
 **The transport.** Four modes — `DNS`, `Proxy`, `VPN`, `Direct` — as one segmented control. The
 line under it is the truth, not the intent: the channel chain in DNS mode, the masked address in
@@ -31,7 +37,8 @@ reorders the pool; `add account` starts the OAuth flow in a new tab.
 
 **Web-search model.** Pick the default Gemini model used by `POST /v1/search` (`auto` uses the
 account catalog's `webSearchModelIds`, or choose `3.5-flash-lite`, `2.5-flash-lite`,
-`3.1-flash-lite`, `2.5-flash`, `3-flash`, `3.8-flash-tiered`).
+`3.1-flash-lite`, `2.5-flash`, `3-flash`, `3.8-flash-tiered`, plus available Gemini 4 models on
+the active account: `4-hydrogen` (`gemini-4-hydrogen-sonar`), `4-neon`, and `4-carbon`).
 
 ## Motion
 
@@ -89,8 +96,9 @@ The stylesheet lives in `client.js` as one string, so there is nothing to build 
 serve separately. A preview can be generated without a browser extension:
 
 ```bash
-node preview/build-preview.mjs   # writes preview/preview.html from the same CSS the overlay uses
+node preview/build-preview.mjs accounts   # writes preview/preview-accounts.html from the real CSS
 ```
 
 That file exists so spacing and contrast can be checked in a plain browser instead of guessing in
-the dark. `assets/panel-dns.png` and `assets/panel-proxy.png` are screenshots of it, built by `preview/build-preview.mjs`.
+the dark. `assets/panel-accounts.png`, `assets/panel-route.png`, and `assets/panel-settings.png`
+are screenshots of it, built by `preview/build-preview.mjs`.

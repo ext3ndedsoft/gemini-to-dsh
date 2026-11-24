@@ -20,6 +20,7 @@ Everything is environment variables; the full list with defaults is in [`.env.ex
 | `AG_IMAGE_MODEL` | `gemini-3.1-flash-image` | Which model draws pictures |
 | `AG_SEARCH_MODEL` | `gemini-3.5-flash-lite` | Default model for `POST /v1/search` (overridable in the panel) |
 | `AG_SEARCH_FALLBACK_MODEL` | `gemini-2.5-flash-lite` | Fallback model when the primary search model fails |
+| `AG_SEARCH_TIMEOUT_MS` | `45000` | Timeout for `POST /v1/search` grounding requests |
 | `AG_UPSTREAM_TIMEOUT_MS` | `120000` | How long upstream may stay silent before the first byte |
 | `AG_RESUME_ATTEMPTS` | `2` | How many times an answer cut mid-word is continued |
 | `AG_CLIENT_VERSION` | `2.34.0` | Antigravity client version sent in `loadCodeAssist` and `User-Agent` |
@@ -37,4 +38,4 @@ npm run smoke       # four requests (models, text, tools, stream); needs a runni
 
 The unit and integration suites are self-contained: they stand up a Cloud Code mock, so a failing test means code, not network. Egress is different — it opens real TLS connections to check that `probeChannel` tells a live channel from a dead one; it needs outbound network and will not pass in an isolated CI.
 
-Panel preview for docs: `node preview/build-preview.mjs dns|proxy` builds HTML from the panel's real CSS.
+Panel preview for docs: `node preview/build-preview.mjs accounts|route|settings` builds HTML from the panel's real CSS.

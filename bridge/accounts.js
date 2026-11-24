@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { CLIENT_VERSION, DEFAULT_SEARCH_MODEL, SEARCH_MODELS, UPSTREAM_TIMEOUT_MS } from './lib/config.js';
+import { CLIENT_VERSION, DEFAULT_SEARCH_MODEL, SEARCH_GEMINI4_MODELS, SEARCH_MODELS, UPSTREAM_TIMEOUT_MS } from './lib/config.js';
 import { fetchQuotaSummary, hubUserAgent } from './lib/quota.js';
 import { readConfig } from './egress.js';
 
@@ -762,6 +762,7 @@ export async function limitsReport({ force = false } = {}) {
         id: acc.id,
         email: acc.email || acc.id,
         native: Boolean(acc.native),
+        enabled: acc.enabled !== false,
         pinned: current.pinned === acc.id,
         tier: acc.tier || null,
         tierName: acc.tierName || null,
@@ -879,7 +880,9 @@ export function setSearchModel(model) {
 
 export function recommendedSearchModel() {
   const current = loadStore();
-  for (const acc of current.accounts) {
+  const active = primaryAccount();
+  const ordered = active ? [active, ...current.accounts.filter((acc) => acc.id !== active.id)] : current.accounts;
+  for (const acc of ordered) {
     if (acc.enabled === false) continue;
     const cached = modelsCache.get(acc.id);
     if (cached && Array.isArray(cached.webSearchModelIds) && cached.webSearchModelIds.length) {
@@ -889,8 +892,26 @@ export function recommendedSearchModel() {
   return process.env.AG_SEARCH_MODEL || DEFAULT_SEARCH_MODEL;
 }
 
-export function availableSearchModels() {
+export function resolveSearchModel(model, account = primaryAccount()) {
+  const raw = typeof model === 'string' ? model.trim() : '';
+  if (!raw) return raw;
+  const entry = SEARCH_GEMINI4_MODELS.find((item) => item.id === raw);
+  if (!entry || !Array.isArray(entry.tiers) || !entry.tiers.length) return raw;
   const current = loadStore();
+  const candidates = [
+    ...(account ? [account] : []),
+    ...current.accounts.filter((acc) => acc.enabled !== false && (!account || acc.id !== account.id)),
+  ];
+  for (const acc of candidates) {
+    const catalog = modelsCache.get(acc.id)?.models;
+    if (!catalog) continue;
+    const hit = entry.tiers.find((tier) => catalog[tier] && catalog[tier].quotaInfo);
+    if (hit) return hit;
+  }
+  return entry.tiers[0];
+}
+
+export function availableSearchModels(current = loadStore()) {
   const seen = new Set();
   const out = [];
   const add = (id) => {
@@ -900,25 +921,53 @@ export function availableSearchModels() {
     seen.add(trimmed);
     out.push(trimmed);
   };
-  for (const acc of current.accounts) {
-    if (acc.enabled === false) continue;
-    const cached = modelsCache.get(acc.id);
+
+  const active = primaryAccount();
+  const cached = active ? modelsCache.get(active.id) : null;
+  const catalog = cached && cached.models && typeof cached.models === 'object' ? cached.models : null;
+  const catalogKeys = catalog ? Object.keys(catalog) : [];
+  const hasCatalog = catalogKeys.length > 0;
+  const hasQuota = (id) => Boolean(catalog && catalog[id] && catalog[id].quotaInfo && !id.endsWith('-disabled'));
+
+  if (hasCatalog) {
+    for (const id of cached?.webSearchModelIds || []) {
+      if (!catalog[id] || hasQuota(id)) add(id);
+    }
+    for (const id of SEARCH_MODELS) {
+      if (hasQuota(id)) add(id);
+    }
+    if (!out.length) {
+      for (const id of SEARCH_MODELS) add(id);
+    }
+    for (const entry of SEARCH_GEMINI4_MODELS) {
+      if (catalogKeys.some((id) => entry.match.test(id) && hasQuota(id))) {
+        add(entry.id);
+      }
+    }
+  } else {
     for (const id of cached?.webSearchModelIds || []) add(id);
+    for (const id of SEARCH_MODELS) add(id);
+    // Every Antigravity account (including Jio) carries at least gemini-4-hydrogen-sonar.
+    add('gemini-4-hydrogen-sonar');
   }
-  for (const id of SEARCH_MODELS) add(id);
+
   const selected = searchModelOf(current);
-  if (selected) add(selected);
+  if (selected && (!hasCatalog || hasQuota(selected) || SEARCH_GEMINI4_MODELS.some((entry) => entry.id === selected && out.includes(selected)))) {
+    add(selected);
+  }
   return out;
 }
 
 export function searchConfigReport(current = loadStore()) {
   const model = searchModelOf(current);
   const defaultModel = recommendedSearchModel();
+  const models = availableSearchModels(current);
   return {
     model,
     defaultModel,
     effectiveModel: model || defaultModel,
-    models: availableSearchModels(),
+    availableOnActive: !model || models.includes(model),
+    models,
   };
 }
 

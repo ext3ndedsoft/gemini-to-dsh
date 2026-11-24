@@ -21,9 +21,11 @@
 - **Панель в углу экрана** — показывает остаток квоты по окнам и моделям, задержку ответа, активный маршрут и выбор модели для `web-search`.
 
 <p align="center">
-  <img src="assets/panel-dns.png?v=11" alt="Панель квот и маршрута: режим DNS" width="360">
-  &nbsp;&nbsp;
-  <img src="assets/panel-proxy.png?v=11" alt="Панель квот и маршрута: режим Proxy" width="360">
+  <img src="assets/panel-accounts.png?v=12" alt="Панель квот и маршрута: вкладка Аккаунты" width="275">
+  &nbsp;
+  <img src="assets/panel-route.png?v=12" alt="Панель квот и маршрута: вкладка Маршрут" width="275">
+  &nbsp;
+  <img src="assets/panel-settings.png?v=12" alt="Панель квот и маршрута: вкладка Настройки" width="275">
 </p>
 
 ## Быстрая установка

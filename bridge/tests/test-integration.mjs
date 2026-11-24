@@ -520,6 +520,22 @@ try {
     assert.equal(searchJson.truncated, false);
   });
 
+  const g4SearchRes = await fetch(BASE + '/v1/search', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ query: 'gemini 4 neon search', maxResults: 3, model: 'gemini-4-neon' }),
+  });
+  const g4SearchJson = await g4SearchRes.json();
+  check('POST /v1/search resolves gemini-4-neon to concrete tier with minimal thinking', () => {
+    assert.equal(g4SearchRes.status, 200);
+    assert.equal(g4SearchJson.model, 'gemini-4-neon-low');
+    assert.equal(seenUpstream.search?.body?.model, 'gemini-4-neon-low');
+    assert.deepEqual(seenUpstream.search?.body?.request?.generationConfig?.thinkingConfig, {
+      thinkingBudget: 0,
+      includeThoughts: false,
+    });
+  });
+
   const badSearch = await fetch(BASE + '/v1/search', {
     method: 'POST',
     headers,
